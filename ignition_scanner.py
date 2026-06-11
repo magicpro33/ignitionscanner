@@ -742,6 +742,7 @@ else:
 
 st.sidebar.markdown("---")
 alert_threshold = st.sidebar.slider("Alert score threshold", 40, 95, 65)
+show_all_cols = st.sidebar.toggle("Show all table columns", value=False)
 auto_refresh = st.sidebar.toggle("Auto-refresh", value=True)
 refresh_secs = st.sidebar.slider("Refresh every (sec)", 30, 300, 60)
 st.sidebar.markdown("---")
@@ -844,6 +845,11 @@ if ok:
             "Signals": ", ".join(r["reasons"][:5]),
         })
     df = pd.DataFrame(rows)
+    if not show_all_cols:
+        keep = ["Ticker", "Score", "NightlyRank", "Ignition", "Fuel"]
+        df = df[[c for c in keep if c in df.columns]]
+        if "NightlyRank" in df.columns and df["NightlyRank"].isna().all():
+            df = df.drop(columns=["NightlyRank"])
     st.dataframe(
         df,
         use_container_width=True,
