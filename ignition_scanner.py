@@ -98,6 +98,36 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; 
     border: 1px solid #2b3a4f;
     color: #9fb6d0;
 }
+.crow {
+    background: #10151f;
+    border: 1px solid #1c2533;
+    border-radius: 8px;
+    padding: 8px 12px 9px 12px;
+    margin-bottom: 6px;
+}
+.crow.hot { border-color: #ff6b1a; }
+.cline {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    font-family: 'Space Mono', monospace;
+}
+.ctick { font-size: 17px; font-weight: 700; color: #e8eef5; letter-spacing: 0.5px; }
+.cflag {
+    font-size: 10px; color: #ff6b1a; border: 1px solid #ff6b1a;
+    border-radius: 4px; padding: 1px 6px; margin-left: 8px; vertical-align: middle;
+}
+.cscore { font-size: 20px; font-weight: 700; }
+.cbar {
+    height: 5px; background: #1c2533; border-radius: 3px;
+    margin: 6px 0 5px 0; overflow: hidden;
+}
+.cfill { height: 100%; border-radius: 3px; }
+.csub {
+    font-family: 'Space Mono', monospace;
+    font-size: 11.5px; color: #7e93ab;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -248,55 +278,73 @@ def _alpaca_bars(ticker: str, timeframe: str, start_iso: str, key: str, secret: 
     return df if len(df) else None
 
 
+def _bars_ok(df, n):
+    return df is not None and len(df) >= n
+
+
 @st.cache_data(ttl=55, show_spinner=False)
 def fetch_intraday(ticker: str):
     """1-minute bars for today plus 5-minute bars for ~5 days.
-    Uses Alpaca real-time feed when keys are configured, else Yahoo."""
-    keys = alpaca_keys()
-    if keys:
+    Tries Alpaca (real-time) first when keys are configured, but validates the
+    result: thin tickers can come back nearly empty on the free IEX feed, so
+    anything insufficient falls back to Yahoo, and the better source wins."""
+    m1_a = m5_a = None
+    if alpaca_keys():
         try:
-            k, s = keys
+            k, s = alpaca_keys()
             today = datetime.now(timezone.utc) - timedelta(hours=24)
             week = datetime.now(timezone.utc) - timedelta(days=7)
-            m1 = _alpaca_bars(ticker, "1Min", today.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
-            m5 = _alpaca_bars(ticker, "5Min", week.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
-            if m1 is not None:
-                # Trim m1 to the latest session only
-                last_day = m1.index[-1].date()
-                m1 = m1[m1.index.date == last_day]
-                return m1, m5
+            m1_a = _alpaca_bars(ticker, "1Min", today.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
+            m5_a = _alpaca_bars(ticker, "5Min", week.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
+            if m1_a is not None:
+                last_day = m1_a.index[-1].date()
+                m1_a = m1_a[m1_a.index.date == last_day]
         except Exception:
-            pass  # fall through to Yahoo
+            m1_a = m5_a = None
+    if _bars_ok(m1_a, 6):
+        return m1_a, m5_a
+
+    m1_y = m5_y = None
     try:
         tk = yf.Ticker(ticker)
-        m1 = tk.history(period="1d", interval="1m", prepost=False)
-        m5 = tk.history(period="5d", interval="5m", prepost=False)
-        m1 = flatten_cols(m1) if m1 is not None else None
-        m5 = flatten_cols(m5) if m5 is not None else None
-        return m1, m5
+        m1_y = flatten_cols(tk.history(period="1d", interval="1m", prepost=False))
+        m5_y = flatten_cols(tk.history(period="5d", interval="5m", prepost=False))
     except Exception:
-        return None, None
+        m1_y = m5_y = None
+    if _bars_ok(m1_y, 6):
+        return m1_y, m5_y
+
+    # Neither source is sufficient: return whichever has the most bars
+    a_n = len(m1_a) if m1_a is not None else 0
+    y_n = len(m1_y) if m1_y is not None else 0
+    return (m1_a, m5_a) if a_n >= y_n else (m1_y, m5_y)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_daily(ticker: str):
     """~3 months of daily bars for the RVOL baseline and previous close.
-    Uses Alpaca when keys are configured, else Yahoo."""
-    keys = alpaca_keys()
-    if keys:
+    Tries Alpaca first when keys are configured, validates, falls back to
+    Yahoo, and keeps whichever source has more history."""
+    d_a = None
+    if alpaca_keys():
         try:
-            k, s = keys
+            k, s = alpaca_keys()
             start = datetime.now(timezone.utc) - timedelta(days=100)
-            d = _alpaca_bars(ticker, "1Day", start.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
-            if d is not None and len(d) >= 21:
-                return d
+            d_a = _alpaca_bars(ticker, "1Day", start.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
         except Exception:
-            pass  # fall through to Yahoo
+            d_a = None
+    if _bars_ok(d_a, 21):
+        return d_a
+    d_y = None
     try:
-        d = yf.Ticker(ticker).history(period="3mo", interval="1d")
-        return flatten_cols(d)
+        d_y = flatten_cols(yf.Ticker(ticker).history(period="3mo", interval="1d"))
     except Exception:
-        return None
+        d_y = None
+    if _bars_ok(d_y, 21):
+        return d_y
+    a_n = len(d_a) if d_a is not None else 0
+    y_n = len(d_y) if d_y is not None else 0
+    return d_a if a_n >= y_n else d_y
 
 
 # ----------------------------------------------------------------------------
@@ -567,7 +615,7 @@ def compute_signals(ticker: str) -> dict:
     fuel = fetch_fuel(ticker)
     s["fuel"] = fuel
 
-    if m1 is None or len(m1) < 6 or daily is None or len(daily) < 21:
+    if m1 is None or len(m1) < 6 or daily is None or len(daily) < 5:
         s["error"] = "no data"
         return s
 
@@ -576,8 +624,10 @@ def compute_signals(ticker: str) -> dict:
     prev_close = float(daily["Close"].iloc[-2]) if len(daily) >= 2 else float(daily["Close"].iloc[-1])
     s["chg_pct"] = (s["price"] / prev_close - 1.0) * 100.0 if prev_close else None
 
-    # --- RVOL: cumulative volume today vs 20-day average, pace-adjusted ---
-    avg_daily_vol = float(daily["Volume"].iloc[-21:-1].mean())
+    # --- RVOL: cumulative volume today vs trailing average, pace-adjusted ---
+    # Adaptive window: up to 20 days, fewer if history is short (new listings)
+    win = min(20, len(daily) - 1)
+    avg_daily_vol = float(daily["Volume"].iloc[-(win + 1):-1].mean())
     cum_vol = float(m1["Volume"].sum())
     elapsed = max(len(m1), 1)  # minutes elapsed in session
     expected = avg_daily_vol * min(elapsed / 390.0, 1.0)
@@ -814,6 +864,12 @@ alert_threshold = st.sidebar.slider(
          "its overall Score crosses this line each day. IGNITING alerts fire "
          "regardless of this threshold when all live conditions confirm at once.",
 )
+view_mode = st.sidebar.radio(
+    "Table style", ["Compact (phone)", "Full table"], index=0,
+    help="Compact: card rows sized for a phone screen - ticker, color-coded "
+         "score, slim bar, key numbers. Full table: the complete sortable "
+         "grid with column tooltips (better on desktop).",
+)
 show_all_cols = st.sidebar.toggle(
     "Show all table columns", value=False,
     help="Off: compact view (Ticker, Score, NightlyRank, Ignition, Fuel). "
@@ -930,10 +986,46 @@ if igniting_now:
     )
     st.markdown(f"<div class='ignite-banner'>IGNITING NOW &nbsp; {names}</div>", unsafe_allow_html=True)
 
+def render_compact(rows_data):
+    """Phone-friendly card rows: ticker + big color-coded score, a slim score
+    bar, and one line of key numbers. Readable at 380px wide."""
+    html = []
+    for r in rows_data:
+        sc = r["score"]
+        color = "#ff6b1a" if sc >= 70 else ("#f5b942" if sc >= 50 else "#8aa0b8")
+        hot = " hot" if r["igniting"] else ""
+        flag = "<span class='cflag'>IGNITING</span>" if r["igniting"] else ""
+        pre = r.get("pre_rank")
+        pre_txt = f"N {pre:.0f}" if pre is not None else ""
+        price_txt = f"${r['price']:.2f}" if r.get("price") else ""
+        chg = r.get("chg_pct")
+        if chg is not None:
+            chg_color = "#22c55e" if chg >= 0 else "#ef4444"
+            chg_txt = f"<span style='color:{chg_color}'>{chg:+.1f}%</span>"
+        else:
+            chg_txt = ""
+        rvol_txt = f"RVOL {r['rvol']:.1f}x" if r.get("rvol") else ""
+        html.append(
+            f"<div class='crow{hot}'>"
+            f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>"
+            f"<span class='cscore' style='color:{color}'>{sc:.0f}</span></div>"
+            f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>"
+            f"<div class='csub'><span>IGN {r['ignition_score']:.0f}</span>"
+            f"<span>FUEL {r['fuel_score']:.0f}</span>"
+            + (f"<span>{pre_txt}</span>" if pre_txt else "")
+            + (f"<span>{rvol_txt}</span>" if rvol_txt else "")
+            + f"<span>{price_txt} {chg_txt}</span></div>"
+            f"</div>"
+        )
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
 # ----------------------------------------------------------------------------
-# Leaderboard table
+# Leaderboard
 # ----------------------------------------------------------------------------
-if ok:
+if ok and view_mode == "Compact (phone)":
+    render_compact(ok)
+elif ok:
     HELP = {
         "Ticker": "Stock symbol. Click a row's ticker in the Chart selector below to inspect it.",
         "Score": "Overall Ignition Score, 0-100. Weighted blend: 60% Ignition (live, is it moving NOW) + 40% Fuel (is it primed to move). Higher = stronger momentum setup.",
