@@ -30,6 +30,8 @@ Data: Yahoo Finance via yfinance (free, ~15 min delayed on some feeds).
 import time
 import math
 import re
+import gzip
+import json
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -250,6 +252,144 @@ def fetch_daily(ticker: str):
         return flatten_cols(d)
     except Exception:
         return None
+
+
+# ----------------------------------------------------------------------------
+# Nightly screener dump (magicpro33/stock pipeline)
+# ----------------------------------------------------------------------------
+SCREENER_URL_DEFAULT = (
+    "https://raw.githubusercontent.com/magicpro33/stock/main/data/stock_data.json.gz"
+)
+
+
+def _strip_heavy(d: dict) -> dict:
+    """object_hook: drop numeric/scalar arrays (OHLC history blobs) as each
+    object is parsed, so the 100MB+ dump doesn't blow Streamlit Cloud memory.
+    Lists of dicts (record collections) and dict values are preserved; any
+    residual dict-valued fields are stripped later when rows are built."""
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, list) and v and not isinstance(v[0], dict):
+            continue  # numeric/scalar array, e.g. price history
+        out[k] = v
+    return out
+
+
+@st.cache_data(ttl=21600, show_spinner="Loading nightly screener dump...")
+def load_screener_dump(url: str) -> pd.DataFrame:
+    """Download and parse the nightly stock_data.json.gz into a slim,
+    scalar-only DataFrame indexed by ticker."""
+    resp = requests.get(url, timeout=180)
+    resp.raise_for_status()
+    blob = resp.content
+    if url.endswith(".gz") or blob[:2] == b"\x1f\x8b":
+        blob = gzip.decompress(blob)
+    data = json.loads(blob, object_hook=_strip_heavy)
+
+    records = []
+    if isinstance(data, dict):
+        # {ticker: {fields}} or {"stocks": [...]} style
+        inner = None
+        for key in ("stocks", "data", "results", "records"):
+            if key in data and isinstance(data.get(key), (list, dict)):
+                inner = data[key]
+                break
+        src = inner if inner is not None else data
+        if isinstance(src, dict):
+            for tkr, fields in src.items():
+                if isinstance(fields, dict):
+                    row = {k: v for k, v in fields.items() if not isinstance(v, dict)}
+                    row.setdefault("ticker", tkr)
+                    records.append(row)
+        elif isinstance(src, list):
+            records = [
+                {k: v for k, v in r.items() if not isinstance(v, dict)}
+                for r in src if isinstance(r, dict)
+            ]
+    elif isinstance(data, list):
+        records = [r for r in data if isinstance(r, dict)]
+
+    df = pd.DataFrame(records)
+    # Find the ticker column
+    tcol = None
+    for c in df.columns:
+        if str(c).lower() in ("ticker", "symbol", "sym"):
+            tcol = c
+            break
+    if tcol is None:
+        raise ValueError("Could not find a ticker/symbol column in the dump.")
+    df[tcol] = df[tcol].astype(str).str.upper().str.strip()
+    df = df[df[tcol].str.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}")]
+    df = df.set_index(tcol)
+    return df
+
+
+def _find_col(cols, *needles):
+    """Fuzzy column lookup: first column whose lowercase name contains all
+    needles. Lets this survive renames in the nightly pipeline."""
+    for c in cols:
+        name = str(c).lower().replace(" ", "_")
+        if all(n in name for n in needles):
+            return c
+    return None
+
+
+def prescore_screener(df: pd.DataFrame) -> pd.Series:
+    """Rank the whole dump 0-100 using its own nightly signals. Scale-agnostic:
+    numeric signals become percentile ranks, booleans become 0/100."""
+    cols = list(df.columns)
+    parts = []   # (weight, series 0-100)
+
+    def pct(series):
+        s = pd.to_numeric(series, errors="coerce")
+        return s.rank(pct=True) * 100.0
+
+    def boolean(series):
+        s = series.map(lambda v: 1.0 if v in (True, 1, "1", "true", "True", "Y", "YES", "Yes") else 0.0)
+        return s * 100.0
+
+    c = _find_col(cols, "squeeze")
+    if c is not None:
+        parts.append((0.22, pct(df[c]) if pd.to_numeric(df[c], errors="coerce").notna().any() else boolean(df[c])))
+
+    c = _find_col(cols, "score")
+    if c is not None:
+        parts.append((0.20, pct(df[c])))
+
+    c = _find_col(cols, "rsi")
+    if c is not None:
+        r = pd.to_numeric(df[c], errors="coerce")
+        # thrust zone 50-70 best; oversold/overbought worth less
+        parts.append((0.14, r.map(lambda x: 100.0 if 50 <= x <= 70 else (60.0 if 40 <= x < 50 or 70 < x <= 80 else 20.0) if pd.notna(x) else 0.0)))
+
+    c = _find_col(cols, "golden")
+    if c is not None:
+        parts.append((0.12, boolean(df[c])))
+
+    c = _find_col(cols, "mfi")
+    if c is not None:
+        parts.append((0.10, boolean(df[c]) if not pd.to_numeric(df[c], errors="coerce").notna().any() else pct(df[c])))
+
+    c = _find_col(cols, "obv")
+    if c is not None:
+        parts.append((0.08, pct(df[c])))
+
+    c = _find_col(cols, "volume") or _find_col(cols, "vol")
+    if c is not None:
+        parts.append((0.08, pct(df[c])))
+
+    c = _find_col(cols, "piotroski")
+    if c is not None:
+        parts.append((0.06, pct(df[c])))
+
+    if not parts:
+        # Nothing recognized: fall back to any numeric columns averaged
+        num = df.select_dtypes(include=[np.number])
+        return num.rank(pct=True).mean(axis=1).fillna(0) * 100.0
+
+    total_w = sum(w for w, _ in parts)
+    out = sum(w * s.fillna(0.0) for w, s in parts) / total_w
+    return out
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -556,10 +696,49 @@ def compute_signals(ticker: str) -> dict:
 st.sidebar.markdown("## IGNITION")
 st.sidebar.caption("Momentum ignition scanner")
 
-preset = st.sidebar.selectbox("Watchlist preset", ["Custom"] + list(PRESETS.keys()), index=1)
-default_tickers = PRESETS.get(preset, "SMR,IONQ,UEC,CCJ,NVDA")
-tickers_raw = st.sidebar.text_area("Tickers (comma separated)", value=default_tickers, height=90)
-tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
+preset = None
+screener_mode = False
+source = st.sidebar.radio(
+    "Watchlist source",
+    ["Preset / Custom", "Nightly Screener Top 10"],
+    index=0,
+)
+
+if source == "Nightly Screener Top 10":
+    screener_mode = True
+    screener_url = st.sidebar.text_input("Dump URL", value=SCREENER_URL_DEFAULT)
+    pool_size = st.sidebar.slider(
+        "Candidate pool (pre-ranked from dump)", 20, 80, 40,
+        help="The whole dump is pre-ranked by its own nightly signals; the top "
+             "N candidates get the live ignition scan, then the top 10 by "
+             "final score are shown.",
+    )
+    min_price = st.sidebar.number_input("Min price filter", value=1.0, step=0.5)
+    tickers = []
+    try:
+        dump = load_screener_dump(screener_url)
+        pre = prescore_screener(dump)
+        # Optional price filter if the dump has a price-like column
+        pcol = _find_col(dump.columns, "price") or _find_col(dump.columns, "close")
+        if pcol is not None:
+            prices = pd.to_numeric(dump[pcol], errors="coerce")
+            pre = pre[prices >= float(min_price)]
+        candidates = pre.sort_values(ascending=False).head(pool_size)
+        tickers = list(candidates.index)
+        st.sidebar.caption(
+            f"Dump loaded: {len(dump)} tickers, {len(dump.columns)} fields. "
+            f"Pre-ranked pool: {len(tickers)}."
+        )
+        with st.sidebar.expander("Detected dump fields"):
+            st.write(", ".join(str(c) for c in dump.columns))
+        st.session_state["screener_pre"] = candidates
+    except Exception as e:
+        st.sidebar.error(f"Could not load nightly dump: {e}")
+else:
+    preset = st.sidebar.selectbox("Watchlist preset", ["Custom"] + list(PRESETS.keys()), index=1)
+    default_tickers = PRESETS.get(preset, "SMR,IONQ,UEC,CCJ,NVDA")
+    tickers_raw = st.sidebar.text_area("Tickers (comma separated)", value=default_tickers, height=90)
+    tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
 
 st.sidebar.markdown("---")
 alert_threshold = st.sidebar.slider("Alert score threshold", 40, 95, 65)
@@ -601,6 +780,18 @@ ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
 ok.sort(key=lambda r: r["score"], reverse=True)
 
+if screener_mode:
+    scanned_n = len(ok)
+    ok = ok[:10]
+    pre_ranks = st.session_state.get("screener_pre")
+    for r in ok:
+        if pre_ranks is not None and r["ticker"] in pre_ranks.index:
+            r["pre_rank"] = float(pre_ranks[r["ticker"]])
+    st.caption(
+        f"Nightly Screener mode: pre-ranked the full dump, live-scanned the top "
+        f"{scanned_n} candidates, showing the top 10 by ignition score."
+    )
+
 # Register new alerts
 session_key = datetime.now().strftime("%Y%m%d")
 for r in ok:
@@ -636,6 +827,7 @@ if ok:
         rows.append({
             "Ticker": r["ticker"],
             "Score": round(r["score"], 1),
+            "NightlyRank": round(r["pre_rank"], 0) if r.get("pre_rank") is not None else None,
             "Ignition": round(r["ignition_score"], 1),
             "Fuel": round(r["fuel_score"], 1),
             "Price": round(r["price"], 2) if r["price"] else None,
