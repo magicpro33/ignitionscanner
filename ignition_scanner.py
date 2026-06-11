@@ -77,6 +77,14 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; 
     70% { box-shadow: 0 0 0 12px rgba(255,107,26,0); }
     100% { box-shadow: 0 0 0 0 rgba(255,107,26,0); }
 }
+.ignite-banner.rev {
+    background: linear-gradient(90deg, #170f2a, #221540);
+    border-color: #8b5cf6;
+    color: #c4b0f5;
+    animation: none;
+}
+.crow.rev { border-color: #8b5cf6; }
+.cflag.rev { color: #8b5cf6; border-color: #8b5cf6; }
 .alert-row {
     font-family: 'Space Mono', monospace;
     font-size: 13px;
@@ -188,6 +196,25 @@ def vwap(df: pd.DataFrame) -> pd.Series:
     tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
     cum_vol = df["Volume"].cumsum().replace(0, np.nan)
     return (tp * df["Volume"]).cumsum() / cum_vol
+
+
+# Typical U-shaped intraday volume distribution: fraction of a full day's
+# volume that trades in each 30-minute bucket from 9:30 to 16:00 ET.
+# Heavy at the open and close, quiet over lunch. Using this instead of a
+# linear pace stops RVOL from reading 3-5x on every stock at 9:45 AM.
+VOL_CURVE = [0.13, 0.09, 0.075, 0.065, 0.06, 0.055, 0.05,
+             0.05, 0.055, 0.06, 0.07, 0.09, 0.15]
+
+
+def expected_vol_fraction(minutes_elapsed: int) -> float:
+    """Cumulative fraction of a typical day's volume expected by N minutes
+    into the session, following the U-shaped curve above."""
+    m = max(1, min(int(minutes_elapsed), 390))
+    full_buckets = m // 30
+    frac = sum(VOL_CURVE[:full_buckets])
+    if full_buckets < len(VOL_CURVE):
+        frac += VOL_CURVE[full_buckets] * (m - full_buckets * 30) / 30.0
+    return max(frac, 0.01)
 
 
 def flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
@@ -607,7 +634,8 @@ def compute_signals(ticker: str) -> dict:
         "above_vwap": False, "vwap_cross": False, "new_hod": False,
         "near_hod": False, "rsi5": None, "macd_cross": False,
         "macd_bull": False, "ignition_score": 0.0, "fuel_score": 0.0,
-        "score": 0.0, "igniting": False, "reasons": [], "error": None,
+        "score": 0.0, "igniting": False, "gap_reversal": False,
+        "gap_pct": 0.0, "reasons": [], "error": None,
     }
 
     m1, m5 = fetch_intraday(ticker)
@@ -624,14 +652,18 @@ def compute_signals(ticker: str) -> dict:
     prev_close = float(daily["Close"].iloc[-2]) if len(daily) >= 2 else float(daily["Close"].iloc[-1])
     s["chg_pct"] = (s["price"] / prev_close - 1.0) * 100.0 if prev_close else None
 
-    # --- RVOL: cumulative volume today vs trailing average, pace-adjusted ---
+    # --- RVOL: cumulative volume today vs trailing average, curve-adjusted ---
     # Adaptive window: up to 20 days, fewer if history is short (new listings)
     win = min(20, len(daily) - 1)
     avg_daily_vol = float(daily["Volume"].iloc[-(win + 1):-1].mean())
     cum_vol = float(m1["Volume"].sum())
     elapsed = max(len(m1), 1)  # minutes elapsed in session
-    expected = avg_daily_vol * min(elapsed / 390.0, 1.0)
+    expected = avg_daily_vol * expected_vol_fraction(elapsed)
     s["rvol"] = cum_vol / expected if expected > 0 else 0.0
+
+    # --- Opening gap vs yesterday's close ---
+    open_px = float(m1["Open"].iloc[0])
+    s["gap_pct"] = (open_px / prev_close - 1.0) * 100.0 if prev_close else 0.0
 
     # --- Bar-level surge: last 3 one-minute bars vs session average bar ---
     avg_bar = float(m1["Volume"].iloc[:-3].mean()) if len(m1) > 6 else float(m1["Volume"].mean())
@@ -771,14 +803,25 @@ def compute_signals(ticker: str) -> dict:
     s["score"] = 0.6 * s["ignition_score"] + 0.4 * s["fuel_score"]
 
     # ------------------------------------------------------------------
-    # IGNITING flag: live confirmation, all conditions at once
+    # Direction-aware flags. The same live footprint (RVOL + surge +
+    # velocity + HOD/VWAP trigger) means different things depending on the
+    # day's tape:
+    #   IGNITING     = footprint fires on a flat/up day -> fresh momentum leg
+    #   GAP REVERSAL = footprint fires while the stock is down hard on the
+    #                  day or gapped down big -> a bounce attempt inside a
+    #                  selloff (tradable, but a different and riskier trade)
     # ------------------------------------------------------------------
-    s["igniting"] = (
+    footprint = (
         s["rvol"] >= 2.0
         and s["surge"] >= 2.0
         and s["velocity"] > 0
         and (s["new_hod"] or s["vwap_cross"])
     )
+    chg = s["chg_pct"] if s["chg_pct"] is not None else 0.0
+    gap = s.get("gap_pct", 0.0) or 0.0
+    down_tape = chg <= -4.0 or gap <= -4.0
+    s["igniting"] = footprint and not down_tape
+    s["gap_reversal"] = footprint and down_tape
 
     # Human-readable reasons
     if s["rvol"] >= 2:
@@ -793,6 +836,8 @@ def compute_signals(ticker: str) -> dict:
         s["reasons"].append("MACD cross")
     if s["velocity"] > 0.5:
         s["reasons"].append(f"+{s['velocity']:.2f}% / 5min")
+    if s["gap_reversal"]:
+        s["reasons"].insert(0, f"day {chg:+.1f}% - bounce attempt")
     if spf and spf >= 0.15:
         s["reasons"].append(f"short float {spf*100:.0f}%")
     if nb > 0:
@@ -951,25 +996,32 @@ if screener_mode:
 session_key = datetime.now().strftime("%Y%m%d")
 for r in ok:
     key = f"{session_key}:{r['ticker']}"
-    if (r["igniting"] or r["score"] >= alert_threshold) and key not in st.session_state.alerted:
+    if (r["igniting"] or r["gap_reversal"] or r["score"] >= alert_threshold) and key not in st.session_state.alerted:
         st.session_state.alerted.add(key)
+        kind = "igniting" if r["igniting"] else ("reversal" if r["gap_reversal"] else "alert")
         st.session_state.alerts.insert(0, {
             "time": datetime.now().strftime("%H:%M:%S"),
             "ticker": r["ticker"],
             "score": round(r["score"]),
             "price": r["price"],
             "why": ", ".join(r["reasons"][:4]) or "score threshold",
-            "igniting": r["igniting"],
+            "kind": kind,
         })
         st.toast(f"{r['ticker']} score {r['score']:.0f} - {', '.join(r['reasons'][:3])}")
         if notify_on:
             why = ", ".join(r["reasons"][:4]) or "score threshold"
             price_txt = f" @ ${r['price']:.2f}" if r.get("price") else ""
-            if r["igniting"]:
+            if kind == "igniting":
                 send_ntfy(
                     f"IGNITING: {r['ticker']}{price_txt}",
                     f"Score {r['score']:.0f} | {why}",
                     priority="urgent", tags="fire",
+                )
+            elif kind == "reversal":
+                send_ntfy(
+                    f"GAP REVERSAL: {r['ticker']}{price_txt}",
+                    f"Bounce attempt inside a selloff. Score {r['score']:.0f} | {why}",
+                    priority="high", tags="warning",
                 )
             else:
                 send_ntfy(
@@ -978,13 +1030,19 @@ for r in ok:
                     priority="default",
                 )
 
-# Igniting banner
+# Igniting / reversal banners
 igniting_now = [r for r in ok if r["igniting"]]
+reversals_now = [r for r in ok if r["gap_reversal"]]
 if igniting_now:
     names = "  |  ".join(
         f"{r['ticker']} {r['score']:.0f} ({', '.join(r['reasons'][:3])})" for r in igniting_now
     )
     st.markdown(f"<div class='ignite-banner'>IGNITING NOW &nbsp; {names}</div>", unsafe_allow_html=True)
+if reversals_now:
+    names = "  |  ".join(
+        f"{r['ticker']} {r['score']:.0f} ({', '.join(r['reasons'][:3])})" for r in reversals_now
+    )
+    st.markdown(f"<div class='ignite-banner rev'>GAP REVERSAL &nbsp; {names}</div>", unsafe_allow_html=True)
 
 def render_compact(rows_data):
     """Phone-friendly card rows: ticker + big color-coded score, a slim score
@@ -993,8 +1051,13 @@ def render_compact(rows_data):
     for r in rows_data:
         sc = r["score"]
         color = "#ff6b1a" if sc >= 70 else ("#f5b942" if sc >= 50 else "#8aa0b8")
-        hot = " hot" if r["igniting"] else ""
-        flag = "<span class='cflag'>IGNITING</span>" if r["igniting"] else ""
+        hot = " hot" if r["igniting"] else (" rev" if r.get("gap_reversal") else "")
+        if r["igniting"]:
+            flag = "<span class='cflag'>IGNITING</span>"
+        elif r.get("gap_reversal"):
+            flag = "<span class='cflag rev'>GAP REV</span>"
+        else:
+            flag = ""
         pre = r.get("pre_rank")
         pre_txt = f"N {pre:.0f}" if pre is not None else ""
         price_txt = f"${r['price']:.2f}" if r.get("price") else ""
@@ -1034,7 +1097,7 @@ elif ok:
         "Fuel": "Primed-to-move sub-score, 0-100, refreshed hourly. Built from: short % of float (25%), insider net buying 90d (25%), news flow + sentiment 48h (25%), float size (10%), distance to 52-week high (15%). High Fuel + rising Ignition is the setup you want.",
         "Price": "Last traded price from the live feed (Alpaca real-time when keys are set, otherwise Yahoo, which can lag ~15 min).",
         "Chg %": "Percent change vs yesterday's close.",
-        "RVOL": "Relative Volume: today's cumulative volume vs the 20-day average, adjusted for time of day. 1.0 = normal. 2x+ = unusual money flowing in. 5x+ = explosive. The single most reliable ignition tell.",
+        "RVOL": "Relative Volume: today's cumulative volume vs the 20-day average, adjusted for the U-shaped intraday volume curve (heavy at open and close, quiet at lunch). 1.0 = normal. 2x+ = unusual money flowing in. 5x+ = explosive. The single most reliable ignition tell.",
         "Surge": "Last 3 one-minute bars' average volume vs this session's average bar. Catches the exact minutes buying pressure hits. 2x+ = surge in progress.",
         "Vel %/5m": "Velocity: percent price move over the last 5 minutes. Positive and growing = thrust.",
         "VWAP+": "Y = price is above VWAP (volume-weighted average price). Above VWAP means buyers in control of the session; a reclaim from below is a classic ignition trigger.",
@@ -1113,10 +1176,20 @@ with st.expander("Metric guide - what everything means"):
 
 Fires only when ALL of these confirm on the same refresh - the footprint of the first
 minutes of a real momentum leg:
-- RVOL at least 2x normal pace
+- RVOL at least 2x normal pace (pace follows the real U-shaped intraday volume curve,
+  so 9:45 AM readings are no longer inflated)
 - Last-3-bar volume surge at least 2x the session average
 - Positive 5-minute velocity
 - A new high of day OR a VWAP reclaim within the last few bars
+- AND the stock is NOT down hard on the day (no big gap-down, day change above -4%)
+
+**GAP REVERSAL banner (violet) / high-priority phone alert**
+
+The same live footprint firing while the stock is down 4%+ on the day or gapped down
+4%+ at the open - usually a post-earnings flush being bought. This is a bounce attempt
+inside a selloff: a real, tradable pattern, but a different and riskier trade than
+fresh ignition. Bounces in crushed stocks fail more often than breakouts in strong
+ones, which is why it gets its own label instead of the IGNITING banner.
 
 **Alert feed** logs each ticker once per day, the first time it crosses your score
 threshold or ignites. Phone pushes mirror the feed when ntfy is configured.
@@ -1194,10 +1267,13 @@ with right:
         st.session_state.alerted = set()
     if st.session_state.alerts:
         for a in st.session_state.alerts[:25]:
-            flag = "IGNITING" if a["igniting"] else "ALERT"
+            kind = a.get("kind", "alert")
+            flag = {"igniting": "IGNITING", "reversal": "GAP REV"}.get(kind, "ALERT")
+            border = "#8b5cf6" if kind == "reversal" else "#ff6b1a"
             price = f"${a['price']:.2f}" if a.get("price") else ""
             st.markdown(
-                f"<div class='alert-row'>{a['time']} &nbsp;<b>{a['ticker']}</b> {price} "
+                f"<div class='alert-row' style='border-left-color:{border}'>"
+                f"{a['time']} &nbsp;<b>{a['ticker']}</b> {price} "
                 f"&nbsp;[{flag} {a['score']}]<br>{a['why']}</div>",
                 unsafe_allow_html=True,
             )
