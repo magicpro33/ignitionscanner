@@ -765,6 +765,10 @@ source = st.sidebar.radio(
     "Watchlist source",
     ["Preset / Custom", "Nightly Screener Top 10"],
     index=0,
+    help="Preset / Custom: scan a hand-picked list. Nightly Screener Top 10: "
+         "your screener's nightly data dump is pre-ranked once per day to pin "
+         "a candidate pool; the pool is live-scanned and the 10 highest "
+         "scoring stocks are shown.",
 )
 
 if source == "Nightly Screener Top 10":
@@ -776,7 +780,11 @@ if source == "Nightly Screener Top 10":
              "N candidates get the live ignition scan, then the top 10 by "
              "final score are shown.",
     )
-    min_price = st.sidebar.number_input("Min price filter", value=1.0, step=0.5)
+    min_price = st.sidebar.number_input(
+        "Min price filter", value=1.0, step=0.5,
+        help="Excludes stocks below this price from the candidate pool. "
+             "Filters out sub-$1 names with wide spreads and manipulation risk.",
+    )
     tickers = []
     try:
         day_key = datetime.now().strftime("%Y-%m-%d")
@@ -800,10 +808,28 @@ else:
     tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
 
 st.sidebar.markdown("---")
-alert_threshold = st.sidebar.slider("Alert score threshold", 40, 95, 65)
-show_all_cols = st.sidebar.toggle("Show all table columns", value=False)
-auto_refresh = st.sidebar.toggle("Auto-refresh", value=True)
-refresh_secs = st.sidebar.slider("Refresh every (sec)", 30, 300, 60)
+alert_threshold = st.sidebar.slider(
+    "Alert score threshold", 40, 95, 65,
+    help="A ticker triggers an alert (feed entry + phone push) the first time "
+         "its overall Score crosses this line each day. IGNITING alerts fire "
+         "regardless of this threshold when all live conditions confirm at once.",
+)
+show_all_cols = st.sidebar.toggle(
+    "Show all table columns", value=False,
+    help="Off: compact view (Ticker, Score, NightlyRank, Ignition, Fuel). "
+         "On: every underlying metric - RVOL, Surge, Velocity, VWAP, HOD, RSI, "
+         "short float, insider dollars, news count, and live signals.",
+)
+auto_refresh = st.sidebar.toggle(
+    "Auto-refresh", value=True,
+    help="Rescan automatically on the interval below. The page must stay open "
+         "(a minimized tab is fine) for scanning and phone alerts to keep running.",
+)
+refresh_secs = st.sidebar.slider(
+    "Refresh every (sec)", 30, 300, 60,
+    help="Live bars are cached ~55 seconds, so refreshing faster than 60s "
+         "mostly re-reads cache. 60s is the sweet spot.",
+)
 st.sidebar.markdown("---")
 if ntfy_config():
     notify_on = st.sidebar.toggle("Phone notifications (ntfy)", value=True)
@@ -908,6 +934,25 @@ if igniting_now:
 # Leaderboard table
 # ----------------------------------------------------------------------------
 if ok:
+    HELP = {
+        "Ticker": "Stock symbol. Click a row's ticker in the Chart selector below to inspect it.",
+        "Score": "Overall Ignition Score, 0-100. Weighted blend: 60% Ignition (live, is it moving NOW) + 40% Fuel (is it primed to move). Higher = stronger momentum setup.",
+        "NightlyRank": "How this stock scored in last night's screener dump pre-ranking (0-100), based on your nightly signals: Short Squeeze, composite score, RSI zone, Golden Cross, MFI, OBV, volume, Piotroski. This is yesterday's homework; Score is today's live grade.",
+        "Ignition": "Live momentum sub-score, 0-100, recalculated every refresh. Built from: relative volume vs 20-day pace (25%), last-3-bar volume surge (15%), 5-min price velocity (15%), acceleration (10%), VWAP position/reclaim (10%), high-of-day breakout (10%), RSI thrust (7.5%), MACD cross (7.5%).",
+        "Fuel": "Primed-to-move sub-score, 0-100, refreshed hourly. Built from: short % of float (25%), insider net buying 90d (25%), news flow + sentiment 48h (25%), float size (10%), distance to 52-week high (15%). High Fuel + rising Ignition is the setup you want.",
+        "Price": "Last traded price from the live feed (Alpaca real-time when keys are set, otherwise Yahoo, which can lag ~15 min).",
+        "Chg %": "Percent change vs yesterday's close.",
+        "RVOL": "Relative Volume: today's cumulative volume vs the 20-day average, adjusted for time of day. 1.0 = normal. 2x+ = unusual money flowing in. 5x+ = explosive. The single most reliable ignition tell.",
+        "Surge": "Last 3 one-minute bars' average volume vs this session's average bar. Catches the exact minutes buying pressure hits. 2x+ = surge in progress.",
+        "Vel %/5m": "Velocity: percent price move over the last 5 minutes. Positive and growing = thrust.",
+        "VWAP+": "Y = price is above VWAP (volume-weighted average price). Above VWAP means buyers in control of the session; a reclaim from below is a classic ignition trigger.",
+        "HOD": "High of day status. NEW = just broke to a new session high (breakout trigger). near = within 0.5% of the high, coiling under it.",
+        "RSI5": "RSI(14) on 5-minute bars. 55-75 is the momentum thrust zone (strong but not exhausted). Above 75 = stretched, chase risk rises. Below 50 = no momentum yet.",
+        "Short%Flt": "Short interest as a percent of float. 15%+ means heavy bets against the stock - squeeze fuel if price starts running and shorts are forced to cover.",
+        "InsiderNet$": "Net dollar value of insider buys minus sells over the last 90 days (SEC Form 4 filings). Positive = the people who know the company best are accumulating.",
+        "News48h": "Number of news headlines in the last 48 hours. Momentum needs a catalyst; no news usually means no sustained move.",
+        "Signals": "Plain-English list of which triggers are currently firing for this ticker.",
+    }
     rows = []
     for r in ok:
         f = r["fuel"]
@@ -937,22 +982,63 @@ if ok:
         df = df[[c for c in keep if c in df.columns]]
         if "NightlyRank" in df.columns and df["NightlyRank"].isna().all():
             df = df.drop(columns=["NightlyRank"])
+    col_cfg = {
+        "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f", help=HELP["Score"]),
+        "Ignition": st.column_config.ProgressColumn("Ignition", min_value=0, max_value=100, format="%.0f", help=HELP["Ignition"]),
+        "Fuel": st.column_config.ProgressColumn("Fuel", min_value=0, max_value=100, format="%.0f", help=HELP["Fuel"]),
+        "InsiderNet$": st.column_config.NumberColumn("InsiderNet$", format="$%.0f", help=HELP["InsiderNet$"]),
+    }
+    for col in df.columns:
+        if col not in col_cfg:
+            col_cfg[col] = st.column_config.Column(col, help=HELP.get(col, ""))
     st.dataframe(
         df,
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.0f"),
-            "Ignition": st.column_config.ProgressColumn("Ignition", min_value=0, max_value=100, format="%.0f"),
-            "Fuel": st.column_config.ProgressColumn("Fuel", min_value=0, max_value=100, format="%.0f"),
-            "InsiderNet$": st.column_config.NumberColumn("InsiderNet$", format="$%.0f"),
-        },
+        column_config=col_cfg,
     )
 else:
     st.warning("No data returned. Market may be closed, or tickers invalid.")
 
 if failed:
     st.caption(f"No data for: {', '.join(failed)}")
+
+with st.expander("Metric guide - what everything means"):
+    st.markdown("""
+**The two halves of the Score**
+
+- **Ignition (60% of Score)** answers *"is money flowing in right now?"* It is rebuilt
+  from live bars every refresh. Its loudest inputs are **RVOL** (today's volume vs the
+  20-day norm for this time of day) and the **volume Surge** in the last 3 minutes.
+  Price **Velocity/Acceleration**, a **VWAP** reclaim, a **new High of Day**, RSI in the
+  55-75 thrust zone, and a fresh MACD cross round it out.
+- **Fuel (40% of Score)** answers *"is this stock primed to make a big move?"* High
+  **short % of float** means forced buyers if price runs. **Insider net buying** means
+  informed accumulation. **Fresh news** provides the catalyst. **Small float** makes
+  moves violent. **Near 52-week highs** is where momentum lives.
+
+**IGNITING NOW banner / urgent phone alert**
+
+Fires only when ALL of these confirm on the same refresh - the footprint of the first
+minutes of a real momentum leg:
+- RVOL at least 2x normal pace
+- Last-3-bar volume surge at least 2x the session average
+- Positive 5-minute velocity
+- A new high of day OR a VWAP reclaim within the last few bars
+
+**Alert feed** logs each ticker once per day, the first time it crosses your score
+threshold or ignites. Phone pushes mirror the feed when ntfy is configured.
+
+**Chart**: candles are 1-minute bars for the current session; the orange line is VWAP -
+price above it means buyers control the session. Volume bars underneath confirm whether
+a move has real participation.
+
+**NightlyRank vs Score**: NightlyRank is how the stock graded in last night's screener
+dump (yesterday's homework). Score is the live grade. A high NightlyRank with a surging
+Ignition number is the combination this tool exists to catch.
+
+*Detects momentum early; does not predict the future. Not financial advice.*
+""")
 
 # ----------------------------------------------------------------------------
 # Detail chart + alert feed
