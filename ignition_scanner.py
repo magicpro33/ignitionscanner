@@ -113,6 +113,12 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; 
     padding: 8px 12px 9px 12px;
     margin-bottom: 6px;
 }
+.ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: 'DM Sans', sans-serif; }
+.ref-table td { padding: 8px 10px; border-bottom: 1px solid #1c2533; color: #d8e0ea; vertical-align: top; line-height: 1.5; }
+.ref-table .grp td { padding-top: 20px; padding-bottom: 6px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.6px; border-bottom: 1px solid #2b3a4f; text-transform: uppercase; }
+.ref-table .trm { font-family: 'Space Mono', monospace; font-weight: 700; white-space: nowrap; color: #e8eef5; width: 120px; }
+.ref-table .lvl { font-family: 'Space Mono', monospace; color: #7e93ab; font-size: 12px; white-space: nowrap; width: 170px; }
+.ref-table .mng { color: #9fb6d0; }
 .crow.hot { border-color: #ff6b1a; }
 .cline {
     display: flex;
@@ -1030,6 +1036,76 @@ for r in ok:
                     priority="default",
                 )
 
+# ----------------------------------------------------------------------------
+# Reference key (rendered in its own tab)
+# ----------------------------------------------------------------------------
+REFERENCE_KEY = [
+    ("The scores", "#d8e0ea", [
+        ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
+        ("Ignition", "Is money flowing in right now (live, every refresh)", "jumps 30+ pts = act"),
+        ("Fuel", "Is the stock primed for a big move (updates hourly)", "high + rising IGN = setup"),
+        ("NightlyRank", "Grade from last night's screener dump - yesterday's homework vs today's live Score", "pool picked from top N"),
+    ]),
+    ("Live ignition signals - 60% of Score", "#ff6b1a", [
+        ("RVOL", "Today's volume vs 20-day norm, adjusted for the U-shaped intraday curve", "2x unusual, 5x explosive"),
+        ("Surge", "Last 3 minutes' volume vs the session's average bar - the exact minutes buying hits", "2x+ = surge live"),
+        ("Vel %/5m", "Price move over the last 5 minutes", "positive + growing"),
+        ("Accel", "Is the velocity itself speeding up or fading", "positive = building"),
+        ("VWAP+", "Price above the volume-weighted average price; a reclaim from below is a trigger", "Y = buyers in control"),
+        ("HOD", "High of day: NEW = fresh breakout, near = coiling within 0.5%", "NEW = trigger"),
+        ("RSI5", "RSI(14) on 5-minute bars", "55-75 thrust, 75+ stretched"),
+        ("MACD", "Fresh bullish cross on 5-minute bars confirms a trend flip", "cross = confirmation"),
+    ]),
+    ("Fuel signals - 40% of Score", "#2dd4a7", [
+        ("Short%Flt", "Short interest as % of float - forced buyers if price runs", "15%+ = squeeze fuel"),
+        ("InsiderNet$", "Insider buys minus sells, last 90 days (SEC Form 4)", "positive = accumulating"),
+        ("News48h", "Headlines in the last 48 hours - momentum needs a catalyst", "0 = no sustained move"),
+        ("Float", "Tradable shares outstanding - small float means violent moves", "under 50M = explosive"),
+        ("52wk dist", "Distance to the 52-week high - momentum lives near highs", "within 5% = best"),
+    ]),
+    ("Flags and alerts", "#8b5cf6", [
+        ("IGNITING", "All four fire at once on a flat/up day: RVOL >=2x, surge >=2x, positive velocity, new HOD or VWAP reclaim", "urgent push, orange"),
+        ("GAP REV", "Same footprint but the stock is down 4%+ or gapped down 4%+ - a bounce inside a selloff, riskier trade", "high push, violet"),
+        ("ALERT", "Score crossed your sidebar threshold; each ticker alerts once per day", "default push"),
+    ]),
+]
+
+
+def render_reference_key():
+    """Color-coded glossary of every term in the indicator, as its own tab."""
+    rows = ["<table class='ref-table'>"]
+    for group, color, terms in REFERENCE_KEY:
+        rows.append(
+            f"<tr class='grp'><td colspan='3' style='color:{color}'>{group}</td></tr>"
+        )
+        for term, meaning, level in terms:
+            rows.append(
+                f"<tr><td class='trm' style='border-left:3px solid {color};"
+                f"padding-left:8px'>{term}</td>"
+                f"<td class='mng'>{meaning}</td><td class='lvl'>{level}</td></tr>"
+            )
+    rows.append("</table>")
+    st.markdown("".join(rows), unsafe_allow_html=True)
+    st.caption(
+        "The relationship that matters: Fuel tells you WHICH stocks to watch, "
+        "Ignition tells you WHEN. A name at Fuel 70 / Ignition 25 is a loaded "
+        "spring doing nothing - yet. When Ignition jumps 30 points in one "
+        "refresh, that is the moment this tool exists for. Not financial advice."
+    )
+
+
+# ----------------------------------------------------------------------------
+# Tabs: live scanner + reference key
+# ----------------------------------------------------------------------------
+tab_scan, tab_ref = st.tabs(["Scanner", "Reference key"])
+
+with tab_ref:
+    render_reference_key()
+
+# Everything below renders inside the Scanner tab. The tab context is entered
+# explicitly so the long display section keeps its flat indentation.
+tab_scan.__enter__()
+
 # Igniting / reversal banners
 igniting_now = [r for r in ok if r["igniting"]]
 reversals_now = [r for r in ok if r["gap_reversal"]]
@@ -1279,6 +1355,9 @@ with right:
             )
     else:
         st.caption("No alerts yet this session. Alerts fire when a ticker crosses the score threshold or all ignition conditions confirm at once.")
+
+# Close the Scanner tab context entered above
+tab_scan.__exit__(None, None, None)
 
 # ----------------------------------------------------------------------------
 # Auto refresh
