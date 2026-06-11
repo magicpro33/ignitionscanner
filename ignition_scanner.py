@@ -181,6 +181,37 @@ def alpaca_keys():
     return None
 
 
+def ntfy_config():
+    """Read ntfy settings from Streamlit secrets. Returns (server, topic) or None."""
+    try:
+        topic = st.secrets.get("NTFY_TOPIC", "")
+        server = st.secrets.get("NTFY_SERVER", "https://ntfy.sh")
+        if topic:
+            return server.rstrip("/"), topic
+    except Exception:
+        pass
+    return None
+
+
+def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "chart_with_upwards_trend"):
+    """Push a notification to the phone via ntfy.sh. Fire-and-forget:
+    a notification failure must never break the scan loop."""
+    cfg = ntfy_config()
+    if not cfg:
+        return False
+    server, topic = cfg
+    try:
+        requests.post(
+            f"{server}/{topic}",
+            data=message.encode("utf-8"),
+            headers={"Title": title, "Priority": priority, "Tags": tags},
+            timeout=5,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _alpaca_bars(ticker: str, timeframe: str, start_iso: str, key: str, secret: str):
     """Fetch bars from Alpaca Market Data v2 (IEX feed works on free plans)."""
     url = f"https://data.alpaca.markets/v2/stocks/{ticker}/bars"
@@ -210,8 +241,10 @@ def _alpaca_bars(ticker: str, timeframe: str, start_iso: str, key: str, secret: 
     df = df.set_index("t").rename(columns={
         "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume",
     })[["Open", "High", "Low", "Close", "Volume"]]
-    # Keep regular session only (09:30-16:00 ET) to match yfinance behavior
-    df = df.between_time("09:30", "16:00")
+    # Keep regular session only (09:30-16:00 ET) for intraday bars.
+    # Daily bars are stamped pre-market by Alpaca, so skip the filter for them.
+    if "Min" in timeframe:
+        df = df.between_time("09:30", "16:00")
     return df if len(df) else None
 
 
@@ -247,6 +280,18 @@ def fetch_intraday(ticker: str):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_daily(ticker: str):
+    """~3 months of daily bars for the RVOL baseline and previous close.
+    Uses Alpaca when keys are configured, else Yahoo."""
+    keys = alpaca_keys()
+    if keys:
+        try:
+            k, s = keys
+            start = datetime.now(timezone.utc) - timedelta(days=100)
+            d = _alpaca_bars(ticker, "1Day", start.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
+            if d is not None and len(d) >= 21:
+                return d
+        except Exception:
+            pass  # fall through to Yahoo
     try:
         d = yf.Ticker(ticker).history(period="3mo", interval="1d")
         return flatten_cols(d)
@@ -322,6 +367,24 @@ def load_screener_dump(url: str) -> pd.DataFrame:
     df = df[df[tcol].str.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}")]
     df = df.set_index(tcol)
     return df
+
+
+@st.cache_data(ttl=86400, show_spinner="Building today's watchlist from nightly dump...")
+def screener_watchlist(url: str, pool_size: int, min_price: float, day_key: str):
+    """Pin the candidate watchlist ONCE per calendar day from the nightly dump.
+    day_key (today's date) is part of the cache key, so this recomputes only
+    when the date changes or the settings change. After this, all live data
+    comes from the real-time feed - the dump is not touched again."""
+    dump = load_screener_dump(url)
+    pre = prescore_screener(dump)
+    pcol = _find_col(dump.columns, "price") or _find_col(dump.columns, "close")
+    if pcol is not None:
+        prices = pd.to_numeric(dump[pcol], errors="coerce")
+        pre = pre[prices >= float(min_price)]
+    candidates = pre.sort_values(ascending=False).head(pool_size)
+    meta = {"n_tickers": len(dump), "n_fields": len(dump.columns),
+            "fields": [str(c) for c in dump.columns]}
+    return list(candidates.index), candidates, meta
 
 
 def _find_col(cols, *needles):
@@ -716,21 +779,17 @@ if source == "Nightly Screener Top 10":
     min_price = st.sidebar.number_input("Min price filter", value=1.0, step=0.5)
     tickers = []
     try:
-        dump = load_screener_dump(screener_url)
-        pre = prescore_screener(dump)
-        # Optional price filter if the dump has a price-like column
-        pcol = _find_col(dump.columns, "price") or _find_col(dump.columns, "close")
-        if pcol is not None:
-            prices = pd.to_numeric(dump[pcol], errors="coerce")
-            pre = pre[prices >= float(min_price)]
-        candidates = pre.sort_values(ascending=False).head(pool_size)
-        tickers = list(candidates.index)
+        day_key = datetime.now().strftime("%Y-%m-%d")
+        tickers, candidates, meta = screener_watchlist(
+            screener_url, pool_size, float(min_price), day_key
+        )
         st.sidebar.caption(
-            f"Dump loaded: {len(dump)} tickers, {len(dump.columns)} fields. "
-            f"Pre-ranked pool: {len(tickers)}."
+            f"Watchlist pinned for {day_key} from dump "
+            f"({meta['n_tickers']} tickers, {meta['n_fields']} fields). "
+            f"Pool: {len(tickers)}. Live data from real-time feed only."
         )
         with st.sidebar.expander("Detected dump fields"):
-            st.write(", ".join(str(c) for c in dump.columns))
+            st.write(", ".join(meta["fields"]))
         st.session_state["screener_pre"] = candidates
     except Exception as e:
         st.sidebar.error(f"Could not load nightly dump: {e}")
@@ -745,6 +804,19 @@ alert_threshold = st.sidebar.slider("Alert score threshold", 40, 95, 65)
 show_all_cols = st.sidebar.toggle("Show all table columns", value=False)
 auto_refresh = st.sidebar.toggle("Auto-refresh", value=True)
 refresh_secs = st.sidebar.slider("Refresh every (sec)", 30, 300, 60)
+st.sidebar.markdown("---")
+if ntfy_config():
+    notify_on = st.sidebar.toggle("Phone notifications (ntfy)", value=True)
+    if st.sidebar.button("Send test notification"):
+        ok_test = send_ntfy("IGNITION test", "If you can read this, alerts are wired up.", tags="white_check_mark")
+        if ok_test:
+            st.sidebar.success("Test sent - check your phone.")
+        else:
+            st.sidebar.error("Send failed - check NTFY_TOPIC in secrets.")
+else:
+    notify_on = False
+    st.sidebar.info("Phone alerts off: add NTFY_TOPIC to secrets to enable ntfy push.")
+
 st.sidebar.markdown("---")
 if alpaca_keys():
     st.sidebar.success("Data feed: Alpaca (real-time IEX)")
@@ -808,6 +880,21 @@ for r in ok:
             "igniting": r["igniting"],
         })
         st.toast(f"{r['ticker']} score {r['score']:.0f} - {', '.join(r['reasons'][:3])}")
+        if notify_on:
+            why = ", ".join(r["reasons"][:4]) or "score threshold"
+            price_txt = f" @ ${r['price']:.2f}" if r.get("price") else ""
+            if r["igniting"]:
+                send_ntfy(
+                    f"IGNITING: {r['ticker']}{price_txt}",
+                    f"Score {r['score']:.0f} | {why}",
+                    priority="urgent", tags="fire",
+                )
+            else:
+                send_ntfy(
+                    f"{r['ticker']} alert{price_txt}",
+                    f"Score {r['score']:.0f} | {why}",
+                    priority="default",
+                )
 
 # Igniting banner
 igniting_now = [r for r in ok if r["igniting"]]
