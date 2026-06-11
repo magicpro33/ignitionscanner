@@ -927,6 +927,12 @@ show_all_cols = st.sidebar.toggle(
          "On: every underlying metric - RVOL, Surge, Velocity, VWAP, HOD, RSI, "
          "short float, insider dollars, news count, and live signals.",
 )
+paused = st.sidebar.toggle(
+    "Pause scanning", value=False, key="paused",
+    help="Freezes the scanner: no rescans, no new alerts, and auto-refresh "
+         "stops. The last scan's results stay on screen. (Changing the chart "
+         "ticker can still fetch that one chart.) Flip off to resume.",
+)
 auto_refresh = st.sidebar.toggle(
     "Auto-refresh", value=True,
     help="Rescan automatically on the interval below. The page must stay open "
@@ -968,19 +974,29 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-now_str = datetime.now().strftime("%H:%M:%S")
-st.markdown(f"# IGNITION <span style='font-size:16px;color:#5b7089;font-family:Space Mono'>last scan {now_str}</span>", unsafe_allow_html=True)
+APP_VERSION = "v1.7 - pause"
+last_scan = st.session_state.get("last_scan_time", "--:--:--")
+if paused:
+    status = f"<span style='color:#f5b942'>PAUSED</span> &nbsp;last scan {last_scan}"
+else:
+    status = f"last scan {last_scan}"
+st.markdown(f"# IGNITION <span style='font-size:16px;color:#5b7089;font-family:Space Mono'>{status} &nbsp;|&nbsp; {APP_VERSION}</span>", unsafe_allow_html=True)
 st.caption("Catches the first minutes of a momentum move: volume ignition + price thrust + squeeze/insider/news fuel.")
 
 # ----------------------------------------------------------------------------
-# Scan
+# Scan (skipped while paused - last results are reused)
 # ----------------------------------------------------------------------------
-results = []
-progress = st.progress(0.0, text="Scanning...")
-for i, t in enumerate(tickers):
-    results.append(compute_signals(t))
-    progress.progress((i + 1) / max(len(tickers), 1), text=f"Scanning {t}...")
-progress.empty()
+if paused and "last_results" in st.session_state:
+    results = st.session_state["last_results"]
+else:
+    results = []
+    progress = st.progress(0.0, text="Scanning...")
+    for i, t in enumerate(tickers):
+        results.append(compute_signals(t))
+        progress.progress((i + 1) / max(len(tickers), 1), text=f"Scanning {t}...")
+    progress.empty()
+    st.session_state["last_results"] = results
+    st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
 
 ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
@@ -998,9 +1014,9 @@ if screener_mode:
         f"{scanned_n} candidates, showing the top 10 by ignition score."
     )
 
-# Register new alerts
+# Register new alerts (skipped while paused - stale results must not re-alert)
 session_key = datetime.now().strftime("%Y%m%d")
-for r in ok:
+for r in (ok if not paused else []):
     key = f"{session_key}:{r['ticker']}"
     if (r["igniting"] or r["gap_reversal"] or r["score"] >= alert_threshold) and key not in st.session_state.alerted:
         st.session_state.alerted.add(key)
@@ -1362,6 +1378,6 @@ tab_scan.__exit__(None, None, None)
 # ----------------------------------------------------------------------------
 # Auto refresh
 # ----------------------------------------------------------------------------
-if auto_refresh:
+if auto_refresh and not paused:
     time.sleep(refresh_secs)
     st.rerun()
