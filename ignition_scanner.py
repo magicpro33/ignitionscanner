@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 import plotly.graph_objects as go
@@ -166,9 +167,71 @@ def flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # Data fetch (cached)
 # ----------------------------------------------------------------------------
+def alpaca_keys():
+    """Read Alpaca keys from Streamlit secrets. Returns (key, secret) or None."""
+    try:
+        k = st.secrets.get("ALPACA_API_KEY", "")
+        s = st.secrets.get("ALPACA_SECRET_KEY", "")
+        if k and s:
+            return k, s
+    except Exception:
+        pass
+    return None
+
+
+def _alpaca_bars(ticker: str, timeframe: str, start_iso: str, key: str, secret: str):
+    """Fetch bars from Alpaca Market Data v2 (IEX feed works on free plans)."""
+    url = f"https://data.alpaca.markets/v2/stocks/{ticker}/bars"
+    headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+    params = {
+        "timeframe": timeframe,
+        "start": start_iso,
+        "limit": 10000,
+        "adjustment": "raw",
+        "feed": "iex",
+        "sort": "asc",
+    }
+    rows = []
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        rows.extend(data.get("bars") or [])
+        token = data.get("next_page_token")
+        if not token:
+            break
+        params["page_token"] = token
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    df["t"] = pd.to_datetime(df["t"], utc=True).dt.tz_convert("America/New_York")
+    df = df.set_index("t").rename(columns={
+        "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume",
+    })[["Open", "High", "Low", "Close", "Volume"]]
+    # Keep regular session only (09:30-16:00 ET) to match yfinance behavior
+    df = df.between_time("09:30", "16:00")
+    return df if len(df) else None
+
+
 @st.cache_data(ttl=55, show_spinner=False)
 def fetch_intraday(ticker: str):
-    """1-minute bars for today plus 5-minute bars for ~5 days."""
+    """1-minute bars for today plus 5-minute bars for ~5 days.
+    Uses Alpaca real-time feed when keys are configured, else Yahoo."""
+    keys = alpaca_keys()
+    if keys:
+        try:
+            k, s = keys
+            today = datetime.now(timezone.utc) - timedelta(hours=24)
+            week = datetime.now(timezone.utc) - timedelta(days=7)
+            m1 = _alpaca_bars(ticker, "1Min", today.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
+            m5 = _alpaca_bars(ticker, "5Min", week.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
+            if m1 is not None:
+                # Trim m1 to the latest session only
+                last_day = m1.index[-1].date()
+                m1 = m1[m1.index.date == last_day]
+                return m1, m5
+        except Exception:
+            pass  # fall through to Yahoo
     try:
         tk = yf.Ticker(ticker)
         m1 = tk.history(period="1d", interval="1m", prepost=False)
@@ -503,8 +566,11 @@ alert_threshold = st.sidebar.slider("Alert score threshold", 40, 95, 65)
 auto_refresh = st.sidebar.toggle("Auto-refresh", value=True)
 refresh_secs = st.sidebar.slider("Refresh every (sec)", 30, 300, 60)
 st.sidebar.markdown("---")
+if alpaca_keys():
+    st.sidebar.success("Data feed: Alpaca (real-time IEX)")
+else:
+    st.sidebar.info("Data feed: Yahoo (may lag ~15 min). Add Alpaca keys in secrets for real-time.")
 st.sidebar.caption(
-    "Data: Yahoo Finance (may be delayed up to 15 min). "
     "This tool detects momentum early; it does not predict the future. "
     "Not financial advice."
 )
