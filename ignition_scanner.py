@@ -404,36 +404,67 @@ def _strip_heavy(d: dict) -> dict:
 @st.cache_data(ttl=21600, show_spinner="Loading nightly screener dump...")
 def load_screener_dump(url: str) -> pd.DataFrame:
     """Download and parse the nightly stock_data.json.gz into a slim,
-    scalar-only DataFrame indexed by ticker."""
-    resp = requests.get(url, timeout=180)
-    resp.raise_for_status()
-    blob = resp.content
-    if url.endswith(".gz") or blob[:2] == b"\x1f\x8b":
-        blob = gzip.decompress(blob)
-    data = json.loads(blob, object_hook=_strip_heavy)
+    scalar-only DataFrame indexed by ticker.
 
+    Memory-safe path: the response is streamed, decompressed on the fly, and
+    parsed record-by-record with ijson, so the multi-hundred-MB decompressed
+    JSON never exists in RAM at once. This matters on Streamlit Cloud, which
+    kills the container (-> 'no response from server') around ~1 GB."""
+    import decimal
     records = []
-    if isinstance(data, dict):
-        # {ticker: {fields}} or {"stocks": [...]} style
-        inner = None
-        for key in ("stocks", "data", "results", "records"):
-            if key in data and isinstance(data.get(key), (list, dict)):
-                inner = data[key]
-                break
-        src = inner if inner is not None else data
-        if isinstance(src, dict):
-            for tkr, fields in src.items():
-                if isinstance(fields, dict):
-                    row = {k: v for k, v in fields.items() if not isinstance(v, dict)}
-                    row.setdefault("ticker", tkr)
-                    records.append(row)
-        elif isinstance(src, list):
+    try:
+        import ijson
+        with requests.get(url, timeout=300, stream=True) as resp:
+            resp.raise_for_status()
+            stream = resp.raw
+            if url.endswith(".gz"):
+                stream = gzip.GzipFile(fileobj=resp.raw)
+            for tkr, fields in ijson.kvitems(stream, ""):
+                if not isinstance(fields, dict):
+                    continue
+                row = {}
+                for k, v in fields.items():
+                    if isinstance(v, decimal.Decimal):
+                        row[k] = float(v)
+                    elif isinstance(v, (str, int, float, bool)) or v is None:
+                        row[k] = v
+                row.setdefault("ticker", str(tkr))
+                records.append(row)
+    except Exception:
+        records = []
+
+    if not records:
+        # Fallback: in-memory parse (handles list-of-records formats too)
+        resp = requests.get(url, timeout=180)
+        resp.raise_for_status()
+        blob = resp.content
+        if url.endswith(".gz") or blob[:2] == b"\x1f\x8b":
+            blob = gzip.decompress(blob)
+        data = json.loads(blob, object_hook=_strip_heavy)
+        del blob
+        if isinstance(data, dict):
+            inner = None
+            for key in ("stocks", "data", "results", "records"):
+                if key in data and isinstance(data.get(key), (list, dict)):
+                    inner = data[key]
+                    break
+            src = inner if inner is not None else data
+            if isinstance(src, dict):
+                for tkr, fields in src.items():
+                    if isinstance(fields, dict):
+                        row = {k: v for k, v in fields.items() if not isinstance(v, dict)}
+                        row.setdefault("ticker", tkr)
+                        records.append(row)
+            elif isinstance(src, list):
+                records = [
+                    {k: v for k, v in r.items() if not isinstance(v, dict)}
+                    for r in src if isinstance(r, dict)
+                ]
+        elif isinstance(data, list):
             records = [
                 {k: v for k, v in r.items() if not isinstance(v, dict)}
-                for r in src if isinstance(r, dict)
+                for r in data if isinstance(r, dict)
             ]
-    elif isinstance(data, list):
-        records = [r for r in data if isinstance(r, dict)]
 
     df = pd.DataFrame(records)
     # Find the ticker column
@@ -974,7 +1005,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v1.7 - pause"
+APP_VERSION = "v1.8 - memfix"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5b942'>PAUSED</span> &nbsp;last scan {last_scan}"
