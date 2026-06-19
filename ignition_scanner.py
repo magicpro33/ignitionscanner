@@ -1527,7 +1527,7 @@ st.markdown(
     "<circle cx='36' cy='36' r='4' fill='#f5a623'/>"
     "</svg>"
     f"<span style='font-family:Space Mono,monospace;font-size:14px;color:#7a9ab8'>"
-    f"last scan {last_scan} &nbsp;|&nbsp; {APP_VERSION}</span>"
+    f"{APP_VERSION}</span>"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -1554,16 +1554,13 @@ with col_refresh:
         use_container_width=True,
     )
 with col_status:
-    last_scan = st.session_state.get("last_scan_time", "not yet scanned")
     scan_count = len(st.session_state.get("last_results", []))
-    st.markdown(
-        f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#7a9ab8'>last scan: {last_scan}"
-        + (f" &nbsp;·&nbsp; {scan_count} tickers scanned" if scan_count else "")
-        + ("&nbsp;&nbsp;<span style='color:#f5a623'>● watchlist changed</span>" if watchlist_changed and not refresh_clicked else "")
-        + "</div>",
-        unsafe_allow_html=True,
-    )
+    if scan_count:
+        st.markdown(
+            f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
+            f"color:#7a9ab8'>{scan_count} tickers scanned</div>",
+            unsafe_allow_html=True,
+        )
 
 should_scan = refresh_clicked or watchlist_changed or "last_results" not in st.session_state
 
