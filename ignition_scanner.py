@@ -1885,19 +1885,9 @@ with tab_ref:
 # explicitly so the long display section keeps its flat indentation.
 tab_scan.__enter__()
 
-# Igniting / reversal banners
+# Banners removed — IGNITING and GAP REV status shown via card icons instead
 igniting_now = [r for r in ok if r["igniting"]]
 reversals_now = [r for r in ok if r["gap_reversal"]]
-if igniting_now:
-    names = "  |  ".join(
-        f"{r['ticker']} {r['score']:.0f} ({', '.join(r['reasons'][:3])})" for r in igniting_now
-    )
-    st.markdown(f"<div class='ignite-banner'>IGNITING NOW &nbsp; {names}</div>", unsafe_allow_html=True)
-if reversals_now:
-    names = "  |  ".join(
-        f"{r['ticker']} {r['score']:.0f} ({', '.join(r['reasons'][:3])})" for r in reversals_now
-    )
-    st.markdown(f"<div class='ignite-banner rev'>GAP REVERSAL &nbsp; {names}</div>", unsafe_allow_html=True)
 
 # Catalyst tag definitions: label, CSS class, URL builder (lambda ticker -> url)
 CATALYST_TAG_META = {
@@ -2124,41 +2114,6 @@ def render_compact(rows_data):
         else:
             rvol_tile = "<div class='ctile'><div class='ctile-lbl'>RVOL</div><div class='ctile-val' style='color:#4a6a8a'>--</div></div>"
 
-        # ── Visual signal strip (replaces Signal tile numbers) ───────
-        # Uses the same icon logic but tiny, showing IGN and FUEL strength
-        # purely visually — no numbers displayed
-        ign_sc  = r.get("ignition_score", 0)
-        fuel_sc = r.get("fuel_score", 0)
-
-        def _mini_bar(val, hi_col, lo_col="#4a6a8a"):
-            pct = min(val, 100)
-            col = hi_col if val >= 60 else ("#d0b040" if val >= 40 else lo_col)
-            return (
-                f"<div style='width:100%;height:3px;background:#122540;"
-                f"border-radius:2px;margin-top:3px;overflow:hidden'>"
-                f"<div style='width:{pct:.0f}%;height:100%;"
-                f"background:{col};border-radius:2px'></div></div>"
-            )
-
-        sub_tile = (
-            f"<div class='ctile'>"
-            f"<div class='ctile-lbl'>Momentum</div>"
-            f"<div style='display:flex;gap:8px;margin-top:4px;align-items:flex-end'>"
-            # IGN visual
-            f"<div style='flex:1'>"
-            f"<div style='font-family:Space Mono,monospace;font-size:9px;"
-            f"color:#7a9ab8;letter-spacing:.5px;text-transform:uppercase'>IGN</div>"
-            f"{_mini_bar(ign_sc,'#f5a623')}"
-            f"</div>"
-            # FUEL visual
-            f"<div style='flex:1'>"
-            f"<div style='font-family:Space Mono,monospace;font-size:9px;"
-            f"color:#7a9ab8;letter-spacing:.5px;text-transform:uppercase'>FUEL</div>"
-            f"{_mini_bar(fuel_sc,'#3ddc84')}"
-            f"</div>"
-            f"</div></div>"
-        )
-
         # ── Catalyst pills ───────────────────────────────────────────
         cat_tags = fuel.get("catalyst_tags") or []
         bimodal  = fuel.get("bimodal_event", False)
@@ -2177,11 +2132,10 @@ def render_compact(rows_data):
             # Gradient score bar
             bar_html,
             # 2×2 stat grid
-            f"<div class='cgrid'>",
+            f"<div class='cgrid' style='grid-template-columns:1fr 1fr 1fr'>",
             price_tile,
             target_tile,
             rvol_tile,
-            sub_tile,
             f"</div>",
         ]
         if tag_html:
