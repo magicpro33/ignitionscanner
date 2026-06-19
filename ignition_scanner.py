@@ -77,13 +77,13 @@ html, body, [class*="css"]  { font-family: 'Plus Jakarta Sans', sans-serif; }
 .stApp                       { background: #07111f; }
 
 h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
-             letter-spacing: 0.8px; color: #e8f0fa; }
+             letter-spacing: 0.8px; color: #ffffff; }
 
 .metric-mono, .stDataFrame, code { font-family: 'Space Mono', monospace !important; }
 
 /* ── Streamlit widget overrides ───────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"]  { background: #0d1e33; border-radius: 8px; gap: 2px; }
-.stTabs [data-baseweb="tab"]       { color: #8baac8; font-family: 'Rajdhani', sans-serif;
+.stTabs [data-baseweb="tab"]       { color: #b0c8e8; font-family: 'Rajdhani', sans-serif;
                                       font-weight: 600; font-size: 15px; letter-spacing: 0.5px; }
 .stTabs [aria-selected="true"]     { color: #f5a623 !important; border-bottom: 2px solid #f5a623; }
 .stTabs [data-baseweb="tab-panel"] { background: transparent; }
@@ -119,7 +119,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .alert-row {
     font-family: 'Space Mono', monospace;
     font-size: 13px;
-    color: #c8daf0;
+    color: #ffffff;
     padding: 6px 10px;
     border-left: 3px solid #f5a623;
     background: #0d1e33;
@@ -137,7 +137,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
     margin-right: 6px;
     background: #0d1e33;
     border: 1px solid #1e3a5f;
-    color: #8baac8;
+    color: #b0c8e8;
 }
 .fuel-tag a       { color: inherit; text-decoration: none; }
 .fuel-tag a:hover { text-decoration: underline; opacity: 0.85; }
@@ -167,7 +167,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
     margin-right: 6px;
     background: #0a1828;
     border: 1px solid #1e4a7a;
-    color: #8baac8;
+    color: #b0c8e8;
     vertical-align: middle;
 }
 .dtc-gauge a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
@@ -202,22 +202,22 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px;
              font-family: 'Plus Jakarta Sans', sans-serif; }
 .ref-table td  { padding: 8px 10px; border-bottom: 1px solid #122540;
-                 color: #c8daf0; vertical-align: top; line-height: 1.5; }
+                 color: #ffffff; vertical-align: top; line-height: 1.5; }
 .ref-table .grp td { padding-top: 20px; padding-bottom: 6px;
                      font-family: 'Rajdhani', sans-serif; font-weight: 700;
                      font-size: 14px; letter-spacing: 0.8px;
                      border-bottom: 1px solid #1e3a5f; text-transform: uppercase; }
 .ref-table .trm { font-family: 'Space Mono', monospace; font-weight: 700;
-                  white-space: nowrap; color: #e8f0fa; width: 120px; }
-.ref-table .lvl { font-family: 'Space Mono', monospace; color: #4a6a8a;
+                  white-space: nowrap; color: #ffffff; width: 120px; }
+.ref-table .lvl { font-family: 'Space Mono', monospace; color: #7a9ab8;
                   font-size: 12px; white-space: nowrap; width: 170px; }
-.ref-table .mng { color: #8baac8; }
+.ref-table .mng { color: #b0c8e8; }
 
 /* ── Card sub-elements ───────────────────────────────────────────── */
 .cline  { display: flex; align-items: baseline;
           justify-content: space-between;
           font-family: 'Space Mono', monospace; }
-.ctick  { font-size: 17px; font-weight: 700; color: #e8f0fa;
+.ctick  { font-size: 17px; font-weight: 700; color: #ffffff;
           letter-spacing: 0.5px; font-family: 'Rajdhani', sans-serif; }
 .cflag  { font-size: 10px; color: #f5a623; border: 1px solid #f5a623;
           border-radius: 4px; padding: 1px 6px;
@@ -229,19 +229,19 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
           margin: 6px 0 5px 0; overflow: hidden; }
 .cfill  { height: 100%; border-radius: 3px; }
 .csub   { font-family: 'Space Mono', monospace; font-size: 11.5px;
-          color: #4a6a8a; display: flex; justify-content: space-between;
+          color: #7a9ab8; display: flex; justify-content: space-between;
           flex-wrap: wrap; gap: 4px; }
 /* ── Sidebar brand header ────────────────────────────────────────── */
 [data-testid="stSidebar"] { background: #07111f; border-right: 1px solid #1e3a5f; }
-[data-testid="stSidebar"] .stMarkdown p { color: #8baac8; font-size: 13px; }
-[data-testid="stSidebar"] label { color: #c8daf0 !important;
+[data-testid="stSidebar"] .stMarkdown p { color: #b0c8e8; font-size: 13px; }
+[data-testid="stSidebar"] label { color: #ffffff !important;
     font-family: 'Plus Jakarta Sans', sans-serif !important; font-size: 13px; }
-[data-testid="stSidebar"] .stSlider span { color: #8baac8 !important; }
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label { color: #c8daf0 !important; }
-[data-testid="stSidebar"] .stSelectbox label { color: #c8daf0 !important; }
-[data-testid="stSidebar"] .stTextArea label { color: #c8daf0 !important; }
-[data-testid="stSidebar"] .stNumberInput label { color: #c8daf0 !important; }
-[data-testid="stSidebar"] .stToggle label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] .stSlider span { color: #b0c8e8 !important; }
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label { color: #ffffff !important; }
+[data-testid="stSidebar"] .stSelectbox label { color: #ffffff !important; }
+[data-testid="stSidebar"] .stTextArea label { color: #ffffff !important; }
+[data-testid="stSidebar"] .stNumberInput label { color: #ffffff !important; }
+[data-testid="stSidebar"] .stToggle label { color: #ffffff !important; }
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] hr {
     border-color: #1e3a5f; margin: 10px 0; }
 .sidebar-section {
@@ -250,7 +250,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
     font-size: 11px;
     letter-spacing: 1.2px;
     text-transform: uppercase;
-    color: #4a6a8a;
+    color: #7a9ab8;
     margin: 14px 0 6px 0;
     padding-bottom: 4px;
     border-bottom: 1px solid #1e3a5f;
@@ -261,7 +261,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .stProgress > div > div { background-color: #f5a623 !important; }
 /* ── Button brand style ──────────────────────────────────────────── */
 .stButton button {
-    background: #0d1e33; border: 1px solid #1e3a5f; color: #8baac8;
+    background: #0d1e33; border: 1px solid #1e3a5f; color: #b0c8e8;
     font-family: 'Plus Jakarta Sans', sans-serif;
     border-radius: 6px; transition: all 0.2s;
 }
@@ -270,14 +270,14 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .stSuccess { background: #071a10 !important; border-color: #3ddc84 !important;
              color: #3ddc84 !important; }
 .stInfo    { background: #07111f !important; border-color: #1e3a5f !important;
-             color: #8baac8 !important; }
+             color: #b0c8e8 !important; }
 .stError   { background: #220d0d !important; border-color: #e05555 !important;
              color: #e05555 !important; }
 /* ── Selectbox / text area backgrounds ───────────────────────────── */
 [data-testid="stSelectbox"] > div,
 [data-testid="stTextArea"] textarea {
     background: #0d1e33 !important; border-color: #1e3a5f !important;
-    color: #c8daf0 !important;
+    color: #ffffff !important;
 }
 </style>
 """
@@ -1324,16 +1324,15 @@ def compute_signals(ticker: str) -> dict:
 # Sidebar controls
 # ----------------------------------------------------------------------------
 st.sidebar.markdown("## IGNITION")
-st.sidebar.caption("Momentum ignition scanner")
 
 preset = None
 screener_mode = False
 st.sidebar.markdown(
     "<div style='padding:12px 4px 8px;'>"
     "<div style='font-family:Rajdhani,sans-serif;font-size:20px;font-weight:700;"
-    "color:#f5a623;letter-spacing:1px'>AI UPSCALE</div>"
-    "<div style='font-family:\"Plus Jakarta Sans\",sans-serif;font-size:11px;"
-    "color:#4a6a8a;letter-spacing:0.5px'>IGNITION · Momentum Scanner</div>"
+    "color:#f5a623;letter-spacing:1px'><a href='https://aiupscalellc.netlify.app/' "
+    "target='_blank' rel='noopener' style='color:inherit;text-decoration:none'"
+    ">AI UPSCALE</a></div>"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -1472,11 +1471,10 @@ if "alerted" not in st.session_state:
 APP_VERSION = "v3.1 - optimized"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
-    f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>"
+    f"# IGNITION <span style='font-size:16px;color:#7a9ab8;font-family:Space Mono'>"
     f"last scan {last_scan} &nbsp;|&nbsp; {APP_VERSION}</span>",
     unsafe_allow_html=True,
 )
-st.caption("Catches the first minutes of a momentum move: volume ignition + price thrust + squeeze/insider/news fuel.")
 
 # ----------------------------------------------------------------------------
 # Scan — runs on first load, watchlist change, or Refresh button press
@@ -1504,7 +1502,7 @@ with col_status:
     scan_count = len(st.session_state.get("last_results", []))
     st.markdown(
         f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#4a6a8a'>last scan: {last_scan}"
+        f"color:#7a9ab8'>last scan: {last_scan}"
         + (f" &nbsp;·&nbsp; {scan_count} tickers scanned" if scan_count else "")
         + ("&nbsp;&nbsp;<span style='color:#f5a623'>● watchlist changed</span>" if watchlist_changed and not refresh_clicked else "")
         + "</div>",
@@ -1622,9 +1620,9 @@ def az_tag(v, hi, lo, fmt="{:.2f}", suffix=""):
 
 def mrow(label, tooltip, value):
     return (f"<tr style='border-bottom:1px solid #122540'>"
-            f"<td style='padding:8px 10px;font-size:13px;color:#8baac8;width:40%'>"
+            f"<td style='padding:8px 10px;font-size:13px;color:#b0c8e8;width:40%'>"
             f"<span title='{tooltip}' style='cursor:help;border-bottom:1px dashed #1e3a5f'>{label}</span></td>"
-            f"<td style='padding:8px 10px;font-size:13px;font-family:Space Mono,monospace;color:#e8f0fa'>{value}</td>"
+            f"<td style='padding:8px 10px;font-size:13px;font-family:Space Mono,monospace;color:#ffffff'>{value}</td>"
             f"</tr>")
 
 
@@ -1688,7 +1686,7 @@ REFERENCE_KEY = [
         ("200-Day MA", "200-day moving average. The primary long-term trend line. Golden Cross: 50MA crosses above 200MA = major institutional buy signal. Death Cross: 50MA below 200MA = long-term caution.", "golden vs death"),
         ("Volume ratio", "Today's volume vs 20-day average. Above 1.5x = high participation, confirms price moves. Below 0.5x = low conviction, moves are less reliable.", "1.5x+ = confirms"),
     ]),
-    ("Valuation metrics", "#8baac8", [
+    ("Valuation metrics", "#b0c8e8", [
         ("Market Cap", "Share price × shares outstanding. Micro cap <$300M, small <$2B, mid <$10B, large >$10B. Size affects volatility, liquidity, and institutional interest.", "size classification"),
         ("P/E Ratio", "Price-to-Earnings: how much investors pay per $1 of trailing earnings. High P/E = growth expectations priced in. Low P/E = value or declining business. Compare within sector.", "compare in sector"),
         ("Forward P/E", "P/E based on next 12 months estimated earnings. Forward < Trailing = analysts expect earnings growth — good sign. Forward > Trailing = earnings expected to shrink.", "fwd < trail = growth"),
@@ -1697,7 +1695,7 @@ REFERENCE_KEY = [
         ("Beta", "Price volatility relative to the S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. 0.5 = half as volatile. High beta = bigger swings both directions.", "1.5 = high vol"),
         ("Float", "Tradeable shares (excluding insiders and restricted). Smaller float means less supply — any buying pressure creates bigger price moves. Under 20M = explosive.", "under 20M = explosive"),
     ]),
-    ("Financial health metrics", "#c8daf0", [
+    ("Financial health metrics", "#ffffff", [
         ("Profit Margin", "Net income / revenue. What the company keeps per dollar of sales after ALL expenses. Expanding margin = pricing power. Shrinking = rising costs or competition.", "expanding = strong"),
         ("Operating Margin", "EBIT / revenue. Core business efficiency before interest and taxes. High operating margin with low profit margin = heavy debt load eating into profits.", "core efficiency"),
         ("ROE", "Return on Equity = net income / shareholders equity. Above 15% = strong. Buffett's key metric for durable competitive advantage. Can be inflated by high debt.", "15%+ = strong"),
@@ -1707,7 +1705,7 @@ REFERENCE_KEY = [
         ("Revenue Growth", "Year-over-year change in total revenue. Growing top line = expanding business. Consistent double-digit growth = highly attractive to institutional buyers.", "10%+ = strong"),
         ("Earnings Growth", "Year-over-year EPS growth. Growing faster than revenue = increasing efficiency. Shrinking while revenue grows = costs eating into profits.", "10%+ = strong"),
     ]),
-    ("The scores", "#c8daf0", [
+    ("The scores", "#ffffff", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
         ("Ignition", "Is money flowing in right now (live, every refresh)", "jumps 30+ pts = act"),
         ("Fuel", "Is the stock primed for a big move (updates hourly)", "high + rising IGN = setup"),
@@ -1842,7 +1840,7 @@ def dtc_gauge_pill(ticker: str, dtc: float) -> str:
     return (
         f"<span class='dtc-gauge' style='border-color:{color};color:{color}'>"
         f"<a href='{url}' target='_blank' rel='noopener'>"
-        f"{label} {bar} {intensity} <span style='color:#4a6a8a;font-size:10px'>({dtc}d)</span>"
+        f"{label} {bar} {intensity} <span style='color:#7a9ab8;font-size:10px'>({dtc}d)</span>"
         f"</a></span>"
     )
 
@@ -1901,8 +1899,7 @@ def render_compact(rows_data):
             f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
             f"<span class='cscore' style='color:{color}'>{sc:.0f}</span></div>",
             f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>",
-            f"<div class='csub'><span>IGN {r['ignition_score']:.0f}</span>",
-            f"<span>FUEL {r['fuel_score']:.0f}</span>",
+            f"<div class='csub'>",
         ]
         if pre_txt:  parts.append(f"<span>{pre_txt}</span>")
         if rvol_txt: parts.append(f"<span>{rvol_txt}</span>")
@@ -2041,7 +2038,7 @@ Ignition number is the combination this tool exists to catch.
 # ----------------------------------------------------------------------------
 st.markdown(
     "<div style='font-family:Rajdhani,sans-serif;font-size:22px;font-weight:700;"
-    "color:#e8f0fa;letter-spacing:.6px;margin:18px 0 4px'>Stock Analyzer</div>",
+    "color:#ffffff;letter-spacing:.6px;margin:18px 0 4px'>Stock Analyzer</div>",
     unsafe_allow_html=True,
 )
 
@@ -2185,8 +2182,8 @@ else:
 
     st.markdown(
         f"<div style='margin:6px 0 4px;font-family:Plus Jakarta Sans,sans-serif'>"
-        f"<strong style='color:#e8f0fa'>{name}</strong>"
-        f"  <span style='color:#4a6a8a;font-size:13px'>{sec} / {ind}</span></div>",
+        f"<strong style='color:#ffffff'>{name}</strong>"
+        f"  <span style='color:#7a9ab8;font-size:13px'>{sec} / {ind}</span></div>",
         unsafe_allow_html=True,
     )
     if pills_html:
@@ -2210,14 +2207,14 @@ else:
                 f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
                 f"padding:14px 16px;margin-bottom:12px'>"
                 f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;"
-                f"font-size:11px;color:#4a6a8a;margin-bottom:6px'>"
+                f"font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
                 f"<span>52W Low ${lo52:.2f}</span><span>52W High ${hi52:.2f}</span></div>"
                 f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
                 f"<div style='background:{bar_col};width:{bar_pct}%;height:100%;border-radius:4px'></div>"
                 f"<div style='position:absolute;top:-18px;left:calc({bar_pct}% - 1px);"
                 f"font-family:Space Mono,monospace;font-size:10px;color:{bar_col}'>"
                 f"${px:.2f}</div></div>"
-                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#8baac8'>"
+                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
                 f"Position: <strong style='color:{bar_col}'>{rng52:.1f}% of 52W range</strong></div>"
                 f"</div>",
                 unsafe_allow_html=True,
@@ -2234,42 +2231,20 @@ else:
                 f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
                 f"padding:14px 16px;margin-bottom:12px'>"
                 f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;"
-                f"font-size:11px;color:#4a6a8a;margin-bottom:6px'>"
+                f"font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
                 f"<span>BB Lower ${bb_lower:.2f}</span><span>BB Upper ${bb_upper:.2f}</span></div>"
                 f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
                 f"<div style='position:absolute;left:50%;width:1px;height:100%;background:#1e3a5f'></div>"
                 f"<div style='background:{bcol};width:{bpct}%;height:100%;border-radius:4px'></div>"
                 f"<div style='position:absolute;top:-18px;left:calc({bpct}% - 1px);"
                 f"font-family:Space Mono,monospace;font-size:10px;color:{bcol}'>${px:.2f}</div></div>"
-                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#8baac8'>"
+                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
                 f"Bollinger: <strong style='color:{bcol}'>{bb_label}</strong></div>"
-                f"<div style='margin-top:4px;font-family:Space Mono,monospace;font-size:11px;color:#4a6a8a'>"
+                f"<div style='margin-top:4px;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8'>"
                 f"Mid (20MA): ${bb_mid:.2f} · Width: ${bw:.2f}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-
-        # ATR + key levels table
-        az_section("Key Levels")
-        lvl_rows = []
-        if ma50_v:
-            pvs = (px - ma50_v) / ma50_v * 100
-            ci = "Just above — support zone" if 0 < pvs < 5 else ("Extended — overbought" if pvs > 5 else ("Just below — watch reclaim" if pvs > -5 else "Well below — downtrend"))
-            lvl_rows.append(mrow("50-Day MA", "50-Day Moving Average — the short-term trend anchor. Price above = bullish. Just above = ideal entry.", f"${ma50_v:.2f} <span style='color:{'#4dd880' if pvs >= 0 else '#e07070'};font-size:11px'>({'+' if pvs >= 0 else ''}{pvs:.1f}%)</span>"))
-        if ma200_v:
-            mc = "Golden Cross ↑" if (ma50_v and ma50_v > ma200_v) else "Death Cross ↓"
-            cc = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#e07070"
-            lvl_rows.append(mrow("200-Day MA", "200-Day Moving Average — the long-term trend line. Golden Cross = 50MA above 200MA, major buy signal.", f"${ma200_v:.2f} <span style='color:{cc};font-size:11px'>{mc}</span>"))
-        if atr:
-            lvl_rows.append(mrow("ATR (14d)", "Average True Range — daily volatility in dollars. Useful for setting stop-loss levels. Place stops 1–1.5x ATR below your entry.", f"${atr:.2f} <span style='color:#4a6a8a;font-size:11px'>({atr/px*100:.1f}% of price)</span>"))
-        if hi52:
-            dist = (hi52 - px) / px * 100
-            lvl_rows.append(mrow("52W High", "Distance to 52-week high. Within 5% = near resistance breakout zone. Above 52W high = new territory, momentum regime.", f"${hi52:.2f} <span style='color:#4a6a8a;font-size:11px'>({dist:.1f}% away)</span>"))
-        if lo52:
-            dist_lo = (px - lo52) / px * 100
-            lvl_rows.append(mrow("52W Low", "Distance from 52-week low — how far off the floor the stock is trading.", f"${lo52:.2f} <span style='color:#4a6a8a;font-size:11px'>(+{dist_lo:.1f}% above)</span>"))
-        if lvl_rows:
-            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(lvl_rows)}</tbody></table>", unsafe_allow_html=True)
 
         az_section("Price Performance")
         perf_rows = [
@@ -2290,11 +2265,11 @@ else:
             elif rsi_v < 55:  ri, rc = "Neutral — no clear direction", "#8baac8"
             elif rsi_v < 70:  ri, rc = "Strong — uptrend confirmed", "#4dd880"
             else:             ri, rc = "Overbought — pullback possible", "#e07070"
-            tech_rows.append(mrow("RSI (14d)", "Relative Strength Index 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = momentum sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#4a6a8a'>{ri}</span>"))
+            tech_rows.append(mrow("RSI (14d)", "Relative Strength Index 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = momentum sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#7a9ab8'>{ri}</span>"))
         if macd_v is not None:
             mi = "Bullish — momentum building" if macd_v > macd_s else "Bearish — momentum fading"
             mc2 = "#4dd880" if macd_v > macd_s else "#e07070"
-            tech_rows.append(mrow("MACD", "Moving Average Convergence Divergence. MACD above signal line = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#4a6a8a'>{mi}</span>"))
+            tech_rows.append(mrow("MACD", "Moving Average Convergence Divergence. MACD above signal line = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#7a9ab8'>{mi}</span>"))
         if ma50_v and px:
             pvs = (px - ma50_v) / ma50_v * 100
             m5i = "Extended — may be overbought" if pvs > 5 else ("Just above — ideal zone" if pvs > 0 else ("Just below — watch reclaim" if pvs > -5 else "Well below — downtrend"))
@@ -2308,7 +2283,7 @@ else:
             vr = vol_td / vol_avg
             vi = "Very high" if vr > 2 else ("High" if vr > 1.5 else ("Normal" if vr > 0.5 else "Low"))
             vc = "#4dd880" if vr > 1.5 else ("#8baac8" if vr > 0.5 else "#d0b040")
-            tech_rows.append(mrow("Volume", "Today's volume vs 20-day average. High volume confirms moves.", f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#4a6a8a'>{vi}</span>"))
+            tech_rows.append(mrow("Volume", "Today's volume vs 20-day average. High volume confirms moves.", f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#7a9ab8'>{vi}</span>"))
         if ign_sc is not None:
             ic = "#f5a623" if ign_sc >= 70 else ("#c47d0e" if ign_sc >= 50 else "#4a6a8a")
             tech_rows.append(mrow("Ignition Score", "Live momentum score from RVOL, volume surge, velocity, VWAP, HOD, RSI, MACD (0-100).", f"<span style='color:{ic};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{ign_sc:.0f}</span>"))
@@ -2353,16 +2328,16 @@ else:
         if pe:
             val_rows.append(mrow("P/E Ratio", "Price-to-Earnings. How much investors pay per dollar of earnings. High P/E = growth expectations. Low P/E = value or declining business.", az_tag(pe, 0, 25, "{:.1f}", "x") if pe < 100 else f"<span style='font-family:Space Mono,monospace;color:#d0b040'>{pe:.1f}x</span>"))
         if fwpe:
-            val_rows.append(mrow("Forward P/E", "P/E based on next 12 months estimated earnings. Lower than trailing P/E = analysts expect earnings growth.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{fwpe:.1f}x</span>" if fwpe else "--"))
+            val_rows.append(mrow("Forward P/E", "P/E based on next 12 months estimated earnings. Lower than trailing P/E = analysts expect earnings growth.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fwpe:.1f}x</span>" if fwpe else "--"))
         if pb:
             val_rows.append(mrow("P/B Ratio", "Price-to-Book. Below 1.0 = trading below asset value. Above 3.0 = premium for brand/growth.", az_tag(pb, 0, 3, "{:.2f}", "x")))
         if ps:
-            val_rows.append(mrow("P/S Ratio", "Price-to-Sales. Useful for pre-profit companies. Below 2x = reasonable. Above 10x = high growth premium.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{ps:.2f}x</span>"))
+            val_rows.append(mrow("P/S Ratio", "Price-to-Sales. Useful for pre-profit companies. Below 2x = reasonable. Above 10x = high growth premium.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{ps:.2f}x</span>"))
         if beta:
-            val_rows.append(mrow("Beta", "Volatility vs S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. Under 0.6 = defensive.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{beta:.2f}</span>"))
+            val_rows.append(mrow("Beta", "Volatility vs S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. Under 0.6 = defensive.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{beta:.2f}</span>"))
         if fl:
             fl_str = f"{fl/1e9:.2f}B" if fl >= 1e9 else f"{fl/1e6:.0f}M"
-            val_rows.append(mrow("Float", "Tradeable shares outstanding. Smaller float = more explosive moves on volume.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{fl_str}</span>"))
+            val_rows.append(mrow("Float", "Tradeable shares outstanding. Smaller float = more explosive moves on volume.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
         if val_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
 
@@ -2377,7 +2352,7 @@ else:
         if roa:
             hlth_rows.append(mrow("Return on Assets", "Net income / total assets. Not inflated by debt. Above 5% = solid.", az_tag(roa * 100, 8, 3, "{:.1f}", "%")))
         if deq:
-            hlth_rows.append(mrow("D/E Ratio", "Total debt / equity. High D/E amplifies gains and losses. Capital-intensive sectors carry more.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{deq:.1f}%</span>"))
+            hlth_rows.append(mrow("D/E Ratio", "Total debt / equity. High D/E amplifies gains and losses. Capital-intensive sectors carry more.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{deq:.1f}%</span>"))
         if cr:
             hlth_rows.append(mrow("Current Ratio", "Current assets / current liabilities. Above 1.5 = comfortable. Below 1.0 = short-term risk.", az_tag(cr, 1.5, 1.0, "{:.2f}")))
         if hlth_rows:
@@ -2388,7 +2363,7 @@ else:
             rcol = "#4dd880" if "buy" in recky.lower() else ("#e07070" if "sell" in recky.lower() else "#d0b040")
             rdisp = recky.replace("_", " ").title() if recky else "--"
             an_rows = [
-                mrow("Recommendation", "Wall Street consensus: Strong Buy / Buy / Hold / Sell. Aggregates all analyst ratings.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#4a6a8a'>({nana} analysts)</span>"),
+                mrow("Recommendation", "Wall Street consensus: Strong Buy / Buy / Hold / Sell. Aggregates all analyst ratings.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#7a9ab8'>({nana} analysts)</span>"),
                 mrow("Mean Target", "Average 12-month analyst price target. Implies expected upside/downside from current price.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#e07070'}'>({'+' if aus and aus >= 0 else ''}{aus:.1f}%)</span>" if aus else "")),
                 mrow("Target Range", "Low-to-high analyst target spread. Wide range = high uncertainty. Narrow = strong consensus.", f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
             ]
@@ -2408,12 +2383,12 @@ else:
                 for s in suppressed:
                     cat_html += (
                         f"<span style='font-family:Space Mono,monospace;font-size:10px;"
-                        f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
+                        f"color:#7a9ab8;border:1px dashed #1e3a5f;border-radius:4px;"
                         f"padding:1px 6px;margin:2px 3px 2px 0;text-decoration:line-through;"
                         f"display:inline-block'>{s.upper()}</span>"
                     )
             if f_data.get("latest_headline"):
-                cat_html += f"<div style='margin-top:8px;font-size:11px;color:#4a6a8a'>{f_data['latest_headline']}</div>"
+                cat_html += f"<div style='margin-top:8px;font-size:11px;color:#7a9ab8'>{f_data['latest_headline']}</div>"
             st.markdown(cat_html, unsafe_allow_html=True)
 
 
