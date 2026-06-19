@@ -492,6 +492,13 @@ def flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def vwap(df: pd.DataFrame) -> pd.Series:
+    """Volume-weighted average price for intraday bars."""
+    tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
+    cum_vol = df["Volume"].cumsum().replace(0, np.nan)
+    return (tp * df["Volume"]).cumsum() / cum_vol
+
+
 # ----------------------------------------------------------------------------
 # Data fetch (cached)
 # ----------------------------------------------------------------------------
