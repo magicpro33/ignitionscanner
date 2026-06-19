@@ -157,6 +157,38 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .ct-bimodal      { background:#221800; border-color:#f5a623; color:#f5a623; }
 .ct-dtc          { background:#0a1828; border-color:#1e4a7a; color:#5090d0; }
 
+/* ── DTC fuel gauge pill ──────────────────────────────────────────── */
+.dtc-gauge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    padding: 2px 8px 2px 7px;
+    border-radius: 4px;
+    margin-right: 6px;
+    background: #0a1828;
+    border: 1px solid #1e4a7a;
+    color: #8baac8;
+    vertical-align: middle;
+}
+.dtc-gauge a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; }
+.dtc-gauge a:hover { opacity: 0.85; }
+.dtc-bar-track {
+    display: inline-block;
+    width: 36px; height: 5px;
+    background: #122540;
+    border-radius: 3px;
+    overflow: hidden;
+    vertical-align: middle;
+}
+.dtc-bar-fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
 /* ── Compact card rows ───────────────────────────────────────────── */
 .crow {
     background: #0d1e33;
@@ -1160,8 +1192,12 @@ def compute_signals(ticker: str) -> dict:
     if fuel.get("bimodal_event"):
         s["reasons"].append("BIMODAL EVENT")
     dtc = fuel.get("days_to_cover")
-    if dtc and dtc >= 5:
-        s["reasons"].append(f"DTC {dtc}d")
+    if dtc and dtc >= 10:
+        s["reasons"].append(f"squeeze extreme ({dtc}d)")
+    elif dtc and dtc >= 7:
+        s["reasons"].append(f"short fuel high ({dtc}d)")
+    elif dtc and dtc >= 5:
+        s["reasons"].append(f"short fuel mod ({dtc}d)")
 
     return s
 
@@ -1301,7 +1337,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.4 - links"
+APP_VERSION = "v2.5 - dtc gauge"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1396,7 +1432,7 @@ REFERENCE_KEY = [
         ("Geopolitical", "Tariffs, sanctions, energy crisis, defense contract, or conflict keywords in news.", "sector-specific"),
         ("Rate", "Fed, FOMC, interest rate, CPI/PPI keywords — affects rate-sensitive sectors most.", "macro context"),
         ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
-        ("DTC", "Days to Cover: shares short divided by average daily volume. How many days shorts need to exit.", ">=5d = fuel"),
+        ("DTC", "Days to Cover = shares short ÷ avg daily volume. Shown as a fuel gauge bar: gray=low, yellow=moderate (5-7d), amber=high (7-10d), red=extreme (10d+). Extreme means shorts need 10+ days to exit — explosive squeeze potential.", "10d+ = extreme"),
     ]),
     ("The scores", "#c8daf0", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
@@ -1504,6 +1540,40 @@ def catalyst_pill(label: str, css_class: str, url: str) -> str:
     )
 
 
+def dtc_gauge_pill(ticker: str, dtc: float) -> str:
+    """Render DTC as a labeled fuel gauge bar pill.
+    Scale: 0d = empty, 15d+ = full. Color shifts low→mid→high."""
+    url = f"https://finviz.com/quote.ashx?t={ticker}"
+    pct = min(dtc / 15.0, 1.0) * 100
+    if dtc >= 10:
+        color = "#e05555"   # red  = extreme squeeze fuel
+        label = "SQUEEZE"
+        intensity = "EXTREME"
+    elif dtc >= 7:
+        color = "#f5a623"   # amber = high squeeze fuel
+        label = "SHORT"
+        intensity = "HIGH"
+    elif dtc >= 5:
+        color = "#d0b040"   # yellow = moderate
+        label = "SHORT"
+        intensity = "MOD"
+    else:
+        color = "#5090d0"   # blue = low
+        label = "SHORT"
+        intensity = "LOW"
+    bar = (
+        f"<span class='dtc-bar-track'>"
+        f"<span class='dtc-bar-fill' style='width:{pct:.0f}%;background:{color}'></span>"
+        f"</span>"
+    )
+    return (
+        f"<span class='dtc-gauge' style='border-color:{color};color:{color}'>"
+        f"<a href='{url}' target='_blank' rel='noopener'>"
+        f"{label} {bar} {intensity} <span style='color:#4a6a8a;font-size:10px'>({dtc}d)</span>"
+        f"</a></span>"
+    )
+
+
 def build_catalyst_tags_html(ticker: str, cat_tags: list, bimodal: bool,
                               dtc=None, earnings_days=None) -> str:
     """Build the full row of colored clickable catalyst pills for a ticker."""
@@ -1519,8 +1589,7 @@ def build_catalyst_tags_html(ticker: str, cat_tags: list, bimodal: bool,
             label = f"EARN {earnings_days}d" if earnings_days >= 0 else f"EARN -{abs(earnings_days)}d"
         parts.append(catalyst_pill(label, css, url_fn(ticker)))
     if dtc and dtc >= 5:
-        url = f"https://finviz.com/quote.ashx?t={ticker}"
-        parts.append(catalyst_pill(f"DTC {dtc}d", DTC_TAG_CLASS, url))
+        parts.append(dtc_gauge_pill(ticker, dtc))
     return "".join(parts)
 
 
@@ -1748,14 +1817,17 @@ with left:
                 plain_html = " ".join(
                     f"<span class='fuel-tag'>{t}</span>" for t in plain_tags
                 )
+                # DTC gauge rendered separately (visual pill)
+                dtc_val = f.get("days_to_cover")
+                dtc_html = dtc_gauge_pill(ticker_sel, dtc_val) if dtc_val and dtc_val >= 5 else ""
                 cat_html = build_catalyst_tags_html(
                     ticker_sel,
                     f.get("catalyst_tags") or [],
                     f.get("bimodal_event", False),
-                    f.get("days_to_cover"),
+                    None,  # DTC rendered separately above
                     f.get("earnings_days"),
                 )
-                combined = plain_html + ("&nbsp;" if plain_html and cat_html else "") + cat_html
+                combined = plain_html + ("&nbsp;" if plain_html and (dtc_html or cat_html) else "") + dtc_html + cat_html
                 if combined:
                     st.markdown(combined, unsafe_allow_html=True)
                 if f.get("latest_headline"):
