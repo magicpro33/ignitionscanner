@@ -461,18 +461,18 @@ def macd(series: pd.Series, fast=12, slow=26, signal=9):
     return macd_line, signal_line
 
 
-def vwap(df: pd.DataFrame) -> pd.Series:
-    tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
-    cum_vol = df["Volume"].cumsum().replace(0, np.nan)
-    return (tp * df["Volume"]).cumsum() / cum_vol
-
-
 # Typical U-shaped intraday volume distribution: fraction of a full day's
 # volume that trades in each 30-minute bucket from 9:30 to 16:00 ET.
 # Heavy at the open and close, quiet over lunch. Using this instead of a
 # linear pace stops RVOL from reading 3-5x on every stock at 9:45 AM.
-VOL_CURVE = [0.13, 0.09, 0.075, 0.065, 0.06, 0.055, 0.05,
-             0.05, 0.055, 0.06, 0.07, 0.09, 0.15]
+_VOL_CURVE = [0.13, 0.09, 0.075, 0.065, 0.06, 0.055, 0.05,
+              0.05, 0.055, 0.06, 0.07, 0.09, 0.15]
+_VOL_CURVE_CUM = []
+_acc = 0.0
+for _b in _VOL_CURVE:
+    _acc += _b
+    _VOL_CURVE_CUM.append(_acc)
+del _acc, _b
 
 
 def expected_vol_fraction(minutes_elapsed: int) -> float:
@@ -480,9 +480,9 @@ def expected_vol_fraction(minutes_elapsed: int) -> float:
     into the session, following the U-shaped curve above."""
     m = max(1, min(int(minutes_elapsed), 390))
     full_buckets = m // 30
-    frac = sum(VOL_CURVE[:full_buckets])
-    if full_buckets < len(VOL_CURVE):
-        frac += VOL_CURVE[full_buckets] * (m - full_buckets * 30) / 30.0
+    frac = _VOL_CURVE_CUM[full_buckets - 1] if full_buckets > 0 else 0.0
+    if full_buckets < len(_VOL_CURVE):
+        frac += _VOL_CURVE[full_buckets] * (m - full_buckets * 30) / 30.0
     return max(frac, 0.01)
 
 
@@ -495,8 +495,9 @@ def flatten_cols(df: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # Data fetch (cached)
 # ----------------------------------------------------------------------------
+@st.cache_resource
 def alpaca_keys():
-    """Read Alpaca keys from Streamlit secrets. Returns (key, secret) or None."""
+    """Read Alpaca keys once per server session (cache_resource)."""
     try:
         k = st.secrets.get("ALPACA_API_KEY", "")
         s = st.secrets.get("ALPACA_SECRET_KEY", "")
@@ -507,8 +508,9 @@ def alpaca_keys():
     return None
 
 
+@st.cache_resource
 def ntfy_config():
-    """Read ntfy settings from Streamlit secrets. Returns (server, topic) or None."""
+    """Read ntfy settings once per server session (cache_resource)."""
     try:
         topic = st.secrets.get("NTFY_TOPIC", "")
         server = st.secrets.get("NTFY_SERVER", "https://ntfy.sh")
@@ -1460,7 +1462,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.0 - stock analyzer"
+APP_VERSION = "v3.1 - optimized"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>"
@@ -1506,11 +1508,18 @@ should_scan = refresh_clicked or watchlist_changed or "last_results" not in st.s
 
 if should_scan:
     results = []
-    progress = st.progress(0.0, text="Scanning...")
+    progress = st.progress(0.0, text="")
+    _scan_label = st.empty()
     for i, t in enumerate(tickers):
         results.append(compute_signals(t))
-        progress.progress((i + 1) / max(len(tickers), 1), text=f"Scanning {t}…")
+        progress.progress((i + 1) / max(len(tickers), 1))
+        _scan_label.markdown(
+            f"<span style='color:#cc0000;font-family:Space Mono,monospace;"
+            f"font-size:13px;font-weight:500'>Scanning {t}… ({i+1}/{len(tickers)})</span>",
+            unsafe_allow_html=True,
+        )
     progress.empty()
+    _scan_label.empty()
     st.session_state["last_results"] = results
     st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
     st.session_state["last_watchlist_key"] = current_watchlist_key
@@ -1582,6 +1591,65 @@ for r in (ok if should_scan else []):
                     priority="default",
                 )
 
+
+# ----------------------------------------------------------------------------
+# Stock Analyzer helpers (module-level to avoid re-definition on every rerun)
+# ----------------------------------------------------------------------------
+def az_pill(label, good):
+    bg = "#0d2215" if good is True else ("#220d0d" if good is False else "#1a1500")
+    col = "#4dd880" if good is True else ("#e07070" if good is False else "#d0b040")
+    bc  = "#1e6b35" if good is True else ("#a03535" if good is False else "#907020")
+    return (f"<span style='display:inline-block;background:{bg};color:{col};"
+            f"border:1px solid {bc};border-radius:4px;font-family:Space Mono,monospace;"
+            f"font-size:11px;font-weight:500;padding:2px 9px;margin:2px 4px 2px 0'>{label}</span>")
+
+
+def az_tag(v, hi, lo, fmt="{:.2f}", suffix=""):
+    try:
+        fv = float(v)
+        col = "#4dd880" if fv >= hi else ("#d0b040" if fv >= lo else "#e07070")
+        return f"<span style='font-family:Space Mono,monospace;color:{col}'>{fmt.format(fv)}{suffix}</span>"
+    except Exception:
+        return "--"
+
+
+def mrow(label, tooltip, value):
+    return (f"<tr style='border-bottom:1px solid #122540'>"
+            f"<td style='padding:8px 10px;font-size:13px;color:#8baac8;width:40%'>"
+            f"<span title='{tooltip}' style='cursor:help;border-bottom:1px dashed #1e3a5f'>{label}</span></td>"
+            f"<td style='padding:8px 10px;font-size:13px;font-family:Space Mono,monospace;color:#e8f0fa'>{value}</td>"
+            f"</tr>")
+
+
+def az_section(title):
+    st.markdown(f"<div style='font-family:Rajdhani,sans-serif;font-weight:700;font-size:13px;"
+                f"letter-spacing:1px;text-transform:uppercase;color:#f5a623;"
+                f"border-bottom:1px solid #1e3a5f;padding-bottom:4px;margin:14px 0 8px'>{title}</div>",
+                unsafe_allow_html=True)
+
+
+def pct_color(v):
+    if v is None: return "--"
+    col = "#4dd880" if v >= 0 else "#e07070"
+    return f"<span style='font-family:Space Mono,monospace;color:{col}'>{'+' if v >= 0 else ''}{v:.2f}%</span>"
+
+
+@st.cache_data(ttl=900, show_spinner="Loading analysis…")
+def fetch_analyzer(ticker):
+    tk = yf.Ticker(ticker)
+    info = {}
+    try: info = tk.info or {}
+    except Exception: pass
+    hist = pd.DataFrame()
+    try:
+        h = tk.history(period="1y", interval="1d")
+        if h is not None and not h.empty:
+            if isinstance(h.columns, pd.MultiIndex):
+                h.columns = h.columns.get_level_values(0)
+            hist = h
+    except Exception: pass
+    return info, hist
+
 # ----------------------------------------------------------------------------
 # Reference key (rendered in its own tab)
 # ----------------------------------------------------------------------------
@@ -1599,6 +1667,38 @@ REFERENCE_KEY = [
         ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
         ("DTC", "Days to Cover gauge: shares short / avg daily volume. Bar fills red at 10d+ (extreme), amber 7-10d (high), yellow 5-7d (moderate).", "10d+ = extreme"),
         ("Filtered", "Catalysts detected in headlines but blocked by sector whitelist or keyword threshold appear struck-through below the chart. Shows what was caught and why it was filtered.", "transparency"),
+    ]),
+    ("Price range analysis", "#29b6c8", [
+        ("52W Channel", "52-week price channel bar: shows where the current price sits between the year low and high. Red = near 52W low (weak), amber = mid-range, green = near 52W high (strength). Click the position number to understand momentum regime.", "green near high"),
+        ("Bollinger Bands", "20-day Bollinger Bands: a volatility channel built from the 20-day moving average ±2 standard deviations. Price near the upper band = overbought/extended. Near the lower band = oversold/potential bounce. Price inside bands = neutral.", "2 std dev band"),
+        ("ATR", "Average True Range (14-day): the average daily price range in dollars. Used for stop-loss sizing — place stops 1–1.5x ATR below entry to avoid being shaken out by normal noise. Shows as a % of price for context.", "stop-loss sizing"),
+        ("52W High / Low", "Distance to the 52-week high and above the 52-week low. Within 5% of the 52W high = approaching breakout zone. Momentum stocks tend to cluster near their highs.", "5% = breakout zone"),
+    ]),
+    ("Technical indicators - stock analyzer", "#3ddc84", [
+        ("RSI 14d", "Relative Strength Index on daily bars (14-period). Below 30 = oversold. Above 70 = overbought. 45–70 = momentum sweet spot. Used in the Stock Analyzer for the daily trend picture, separate from the RSI5 live signal on 5-minute bars.", "45-70 sweet spot"),
+        ("MACD daily", "Moving Average Convergence Divergence on daily bars. MACD line above signal line = buyers in control daily trend. Below = sellers. Used in Stock Analyzer for the multi-week momentum direction.", "line vs signal"),
+        ("50-Day MA", "50-day moving average of closing prices. The short-to-medium trend anchor. Price just above the 50MA = ideal low-risk entry zone. Just below = watch for a reclaim. Well below = avoid.", "just above = entry"),
+        ("200-Day MA", "200-day moving average. The primary long-term trend line. Golden Cross: 50MA crosses above 200MA = major institutional buy signal. Death Cross: 50MA below 200MA = long-term caution.", "golden vs death"),
+        ("Volume ratio", "Today's volume vs 20-day average. Above 1.5x = high participation, confirms price moves. Below 0.5x = low conviction, moves are less reliable.", "1.5x+ = confirms"),
+    ]),
+    ("Valuation metrics", "#8baac8", [
+        ("Market Cap", "Share price × shares outstanding. Micro cap <$300M, small <$2B, mid <$10B, large >$10B. Size affects volatility, liquidity, and institutional interest.", "size classification"),
+        ("P/E Ratio", "Price-to-Earnings: how much investors pay per $1 of trailing earnings. High P/E = growth expectations priced in. Low P/E = value or declining business. Compare within sector.", "compare in sector"),
+        ("Forward P/E", "P/E based on next 12 months estimated earnings. Forward < Trailing = analysts expect earnings growth — good sign. Forward > Trailing = earnings expected to shrink.", "fwd < trail = growth"),
+        ("P/B Ratio", "Price-to-Book: price vs balance sheet asset value. Below 1.0 = trading below asset value. Above 3.0 = paying premium for brand, IP, or growth.", "below 1 = cheap"),
+        ("P/S Ratio", "Price-to-Sales: useful for pre-profit companies where P/E doesn't apply. Below 2x = reasonable. Above 10x = high growth premium that must be justified.", "below 2x = fair"),
+        ("Beta", "Price volatility relative to the S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. 0.5 = half as volatile. High beta = bigger swings both directions.", "1.5 = high vol"),
+        ("Float", "Tradeable shares (excluding insiders and restricted). Smaller float means less supply — any buying pressure creates bigger price moves. Under 20M = explosive.", "under 20M = explosive"),
+    ]),
+    ("Financial health metrics", "#c8daf0", [
+        ("Profit Margin", "Net income / revenue. What the company keeps per dollar of sales after ALL expenses. Expanding margin = pricing power. Shrinking = rising costs or competition.", "expanding = strong"),
+        ("Operating Margin", "EBIT / revenue. Core business efficiency before interest and taxes. High operating margin with low profit margin = heavy debt load eating into profits.", "core efficiency"),
+        ("ROE", "Return on Equity = net income / shareholders equity. Above 15% = strong. Buffett's key metric for durable competitive advantage. Can be inflated by high debt.", "15%+ = strong"),
+        ("ROA", "Return on Assets = net income / total assets. Not distorted by debt level. Above 5% = solid. Asset-heavy industries (utilities, pipelines) typically have lower ROA.", "5%+ = solid"),
+        ("D/E Ratio", "Debt-to-Equity: total debt / equity. High D/E amplifies both gains and losses. Capital-intensive sectors carry higher D/E by necessity. Rising D/E trend = risk.", "watch the trend"),
+        ("Current Ratio", "Current assets / current liabilities. Can the company pay its bills due in the next 12 months? Above 1.5 = comfortable. Below 1.0 = short-term liquidity risk.", "1.5+ = comfortable"),
+        ("Revenue Growth", "Year-over-year change in total revenue. Growing top line = expanding business. Consistent double-digit growth = highly attractive to institutional buyers.", "10%+ = strong"),
+        ("Earnings Growth", "Year-over-year EPS growth. Growing faster than revenue = increasing efficiency. Shrinking while revenue grows = costs eating into profits.", "10%+ = strong"),
     ]),
     ("The scores", "#c8daf0", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
@@ -1789,19 +1889,20 @@ def render_compact(rows_data):
         ed = f.get("earnings_days")
         dtc = f.get("days_to_cover")
         tag_html = build_catalyst_tags_html(r["ticker"], cat_tags, bimodal, dtc, ed)
-        html.append(
-            f"<div class='crow{hot}'>"
-            f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>"
-            f"<span class='cscore' style='color:{color}'>{sc:.0f}</span></div>"
-            f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>"
-            f"<div class='csub'><span>IGN {r['ignition_score']:.0f}</span>"
-            f"<span>FUEL {r['fuel_score']:.0f}</span>"
-            + (f"<span>{pre_txt}</span>" if pre_txt else "")
-            + (f"<span>{rvol_txt}</span>" if rvol_txt else "")
-            + f"<span>{price_txt} {chg_txt}</span></div>"
-            + (f"<div style='margin-top:4px'>{tag_html}</div>" if tag_html else "")
-            + "</div>"
-        )
+        parts = [
+            f"<div class='crow{hot}'>",
+            f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
+            f"<span class='cscore' style='color:{color}'>{sc:.0f}</span></div>",
+            f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>",
+            f"<div class='csub'><span>IGN {r['ignition_score']:.0f}</span>",
+            f"<span>FUEL {r['fuel_score']:.0f}</span>",
+        ]
+        if pre_txt:  parts.append(f"<span>{pre_txt}</span>")
+        if rvol_txt: parts.append(f"<span>{rvol_txt}</span>")
+        parts.append(f"<span>{price_txt} {chg_txt}</span></div>")
+        if tag_html: parts.append(f"<div style='margin-top:4px'>{tag_html}</div>")
+        parts.append("</div>")
+        html.append("".join(parts))
     st.markdown("".join(html), unsafe_allow_html=True)
 
 
@@ -1951,68 +2052,7 @@ else:
         )
 
     # ── helper renderers ────────────────────────────────────────────
-    def az_pill(label, good):
-        if good is True:
-            bg, col, bc = "#0d2215", "#4dd880", "#1e6b35"
-        elif good is False:
-            bg, col, bc = "#220d0d", "#e07070", "#a03535"
-        else:
-            bg, col, bc = "#1a1500", "#d0b040", "#907020"
-        return (
-            f"<span style='display:inline-block;background:{bg};color:{col};"
-            f"border:1px solid {bc};border-radius:4px;font-family:Space Mono,monospace;"
-            f"font-size:11px;font-weight:500;padding:2px 9px;margin:2px 4px 2px 0'>"
-            f"{label}</span>"
-        )
-
-    def az_tag(v, hi, lo, fmt="{:.2f}", suffix=""):
-        try:
-            fv = float(v)
-            col = "#4dd880" if fv >= hi else ("#d0b040" if fv >= lo else "#e07070")
-            return f"<span style='font-family:Space Mono,monospace;color:{col}'>{fmt.format(fv)}{suffix}</span>"
-        except Exception:
-            return "--"
-
-    def mrow(label, tooltip, value):
-        return (
-            f"<tr style='border-bottom:1px solid #122540'>"
-            f"<td style='padding:8px 10px;font-size:13px;color:#8baac8;width:40%'>"
-            f"<span title='{tooltip}' style='cursor:help;border-bottom:1px dashed #1e3a5f'>{label}</span></td>"
-            f"<td style='padding:8px 10px;font-size:13px;font-family:Space Mono,monospace;color:#e8f0fa'>{value}</td>"
-            f"</tr>"
-        )
-
-    def az_section(title):
-        st.markdown(
-            f"<div style='font-family:Rajdhani,sans-serif;font-weight:700;font-size:13px;"
-            f"letter-spacing:1px;text-transform:uppercase;color:#f5a623;"
-            f"border-bottom:1px solid #1e3a5f;padding-bottom:4px;margin:14px 0 8px'>"
-            f"{title}</div>",
-            unsafe_allow_html=True,
-        )
-
-    def pct_color(v):
-        if v is None: return "--"
-        col = "#4dd880" if v >= 0 else "#e07070"
-        sign = "+" if v >= 0 else ""
-        return f"<span style='font-family:Space Mono,monospace;color:{col}'>{sign}{v:.2f}%</span>"
-
-    # ── Fetch data ───────────────────────────────────────────────────
-    @st.cache_data(ttl=900, show_spinner="Loading analysis…")
-    def fetch_analyzer(ticker):
-        tk = yf.Ticker(ticker)
-        info = {}
-        try: info = tk.info or {}
-        except Exception: pass
-        hist = pd.DataFrame()
-        try:
-            h = tk.history(period="1y", interval="1d")
-            if h is not None and not h.empty:
-                if isinstance(h.columns, pd.MultiIndex):
-                    h.columns = h.columns.get_level_values(0)
-                hist = h
-        except Exception: pass
-        return info, hist
+    # helpers and fetch_analyzer defined at module level
 
     info, hist = fetch_analyzer(az_ticker)
 
