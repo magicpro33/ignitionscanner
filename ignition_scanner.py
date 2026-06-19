@@ -1234,7 +1234,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.1 - brand"
+APP_VERSION = "v2.2 - bugfix"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1409,20 +1409,20 @@ if reversals_now:
     )
     st.markdown(f"<div class='ignite-banner rev'>GAP REVERSAL &nbsp; {names}</div>", unsafe_allow_html=True)
 
-# Catalyst tag definitions: label, CSS class, URL template (%s = ticker)
+# Catalyst tag definitions: label, CSS class, URL builder (lambda ticker -> url)
 CATALYST_TAG_META = {
-    "earnings":     ("EARNINGS",     "ct-earnings",     "https://finance.yahoo.com/calendar/earnings?symbol=%s"),
-    "fda":          ("FDA",          "ct-fda",          "https://www.fda.gov/patients/drug-approvals-and-databases/drugsfda-data-files"),
-    "buyout":       ("M&A",          "ct-buyout",       "https://finance.yahoo.com/quote/%s/news/"),
-    "legal":        ("LEGAL",        "ct-legal",        "https://efts.sec.gov/LATEST/search-index?q=%s&dateRange=custom&startdt=2024-01-01&forms=8-K"),
-    "partnership":  ("PARTNER",      "ct-partnership",  "https://finance.yahoo.com/quote/%s/news/"),
-    "squeeze":      ("SQUEEZE",      "ct-squeeze",      "https://finviz.com/quote.ashx?t=%s"),
-    "breakout":     ("BREAKOUT",     "ct-breakout",     "https://finviz.com/quote.ashx?t=%s&ty=c&ta=1&p=d"),
-    "geopolitical": ("GEO/MACRO",   "ct-geopolitical", "https://finance.yahoo.com/quote/%s/news/"),
-    "rate":         ("FED/RATES",    "ct-rate",         "https://www.federalreserve.gov/releases/h15/"),
+    "earnings":     ("EARNINGS",   "ct-earnings",     lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}"),
+    "fda":          ("FDA",        "ct-fda",          lambda t: "https://www.fda.gov/patients/drug-approvals-and-databases/drugsfda-data-files"),
+    "buyout":       ("M&A",        "ct-buyout",       lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
+    "legal":        ("LEGAL",      "ct-legal",        lambda t: f"https://efts.sec.gov/LATEST/search-index?q={t}&dateRange=custom&startdt=2024-01-01&forms=8-K"),
+    "partnership":  ("PARTNER",    "ct-partnership",  lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
+    "squeeze":      ("SQUEEZE",    "ct-squeeze",      lambda t: f"https://finviz.com/quote.ashx?t={t}"),
+    "breakout":     ("BREAKOUT",   "ct-breakout",     lambda t: f"https://finviz.com/quote.ashx?t={t}&ty=c&ta=1&p=d"),
+    "geopolitical": ("GEO/MACRO",  "ct-geopolitical", lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
+    "rate":         ("FED/RATES",  "ct-rate",         lambda t: "https://www.federalreserve.gov/releases/h15/"),
 }
 
-BIMODAL_TAG = ("BIMODAL", "ct-bimodal", "https://finance.yahoo.com/calendar/earnings?symbol=%s")
+BIMODAL_TAG = ("BIMODAL", "ct-bimodal", lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}")
 DTC_TAG_CLASS = "ct-dtc"
 
 
@@ -1440,16 +1440,15 @@ def build_catalyst_tags_html(ticker: str, cat_tags: list, bimodal: bool,
     """Build the full row of colored clickable catalyst pills for a ticker."""
     parts = []
     if bimodal:
-        label, css, url_tpl = BIMODAL_TAG
-        parts.append(catalyst_pill(label, css, url_tpl % ticker))
+        label, css, url_fn = BIMODAL_TAG
+        parts.append(catalyst_pill(label, css, url_fn(ticker)))
     for tag in cat_tags:
         if tag not in CATALYST_TAG_META:
             continue
-        label, css, url_tpl = CATALYST_TAG_META[tag]
-        # Enrich label with dynamic data where we have it
+        label, css, url_fn = CATALYST_TAG_META[tag]
         if tag == "earnings" and earnings_days is not None:
             label = f"EARN {earnings_days}d" if earnings_days >= 0 else f"EARN -{abs(earnings_days)}d"
-        parts.append(catalyst_pill(label, css, url_tpl % ticker))
+        parts.append(catalyst_pill(label, css, url_fn(ticker)))
     if dtc and dtc >= 5:
         url = f"https://finviz.com/quote.ashx?t={ticker}"
         parts.append(catalyst_pill(f"DTC {dtc}d", DTC_TAG_CLASS, url))
