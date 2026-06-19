@@ -1301,7 +1301,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.3 - audit"
+APP_VERSION = "v2.4 - links"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1480,15 +1480,15 @@ if reversals_now:
 
 # Catalyst tag definitions: label, CSS class, URL builder (lambda ticker -> url)
 CATALYST_TAG_META = {
-    "earnings":     ("EARNINGS",   "ct-earnings",     lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}"),
-    "fda":          ("FDA",        "ct-fda",          lambda t: "https://www.fda.gov/patients/drug-approvals-and-databases/drugsfda-data-files"),
-    "buyout":       ("M&A",        "ct-buyout",       lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
-    "legal":        ("LEGAL",      "ct-legal",        lambda t: f"https://efts.sec.gov/LATEST/search-index?q={t}&dateRange=custom&startdt=2024-01-01&forms=8-K"),
-    "partnership":  ("PARTNER",    "ct-partnership",  lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
-    "squeeze":      ("SQUEEZE",    "ct-squeeze",      lambda t: f"https://finviz.com/quote.ashx?t={t}"),
-    "breakout":     ("BREAKOUT",   "ct-breakout",     lambda t: f"https://finviz.com/quote.ashx?t={t}&ty=c&ta=1&p=d"),
-    "geopolitical": ("GEO/MACRO",  "ct-geopolitical", lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
-    "rate":         ("FED/RATES",  "ct-rate",         lambda t: "https://www.federalreserve.gov/releases/h15/"),
+    "earnings":     ("EARNINGS",  "ct-earnings",     lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}"),
+    "fda":          ("FDA",       "ct-fda",          lambda t: f"https://www.google.com/search?q={t}+FDA+approval+news&tbm=nws"),
+    "buyout":       ("M&A",       "ct-buyout",       lambda t: f"https://www.google.com/search?q={t}+merger+acquisition+buyout&tbm=nws"),
+    "legal":        ("LEGAL",     "ct-legal",        lambda t: f"https://www.google.com/search?q={t}+lawsuit+settlement+verdict&tbm=nws"),
+    "partnership":  ("PARTNER",   "ct-partnership",  lambda t: f"https://finance.yahoo.com/quote/{t}/news/"),
+    "squeeze":      ("SQUEEZE",   "ct-squeeze",      lambda t: f"https://finviz.com/quote.ashx?t={t}"),
+    "breakout":     ("BREAKOUT",  "ct-breakout",     lambda t: f"https://finviz.com/quote.ashx?t={t}&ty=c&ta=1&p=d"),
+    "geopolitical": ("GEO/MACRO", "ct-geopolitical", lambda t: f"https://www.google.com/search?q={t}+tariff+geopolitical+news&tbm=nws"),
+    "rate":         ("FED/RATES", "ct-rate",         lambda t: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
 }
 
 BIMODAL_TAG = ("BIMODAL", "ct-bimodal", lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}")
