@@ -346,6 +346,48 @@ CATALYST_KEYWORDS = {
                     "hawkish", "dovish", "treasury yield"],
 }
 
+# ── Option 2: minimum keyword hits required before a catalyst tag fires ──
+# Prevents a single passing mention from triggering a tag.
+# Catalysts with high false-positive risk need more evidence.
+CATALYST_MIN_HITS = {
+    "earnings":    1,   # very common, 1 hit ok in context
+    "fda":         2,   # needs 2 FDA-specific terms (e.g. "fda" + "approval")
+    "legal":       2,   # needs 2 legal terms to distinguish from passing refs
+    "buyout":      2,   # needs 2 M&A terms (e.g. "acquire" + "merger")
+    "partnership": 2,   # "agreement" alone fires too easily
+    "squeeze":     1,   # squeeze keywords are specific enough
+    "breakout":    1,   # technical terms are specific
+    "geopolitical":2,   # "oil" or "china" alone is too broad
+    "rate":        2,   # "fed" alone appears in too many general articles
+}
+
+# ── Option 1: sector whitelist per catalyst ──────────────────────────────────
+# Catalysts only fire for sectors where they are actually meaningful.
+# None = fires for ALL sectors (no restriction).
+# List = only fires if the stock's sector contains one of these strings.
+CATALYST_SECTOR_WHITELIST = {
+    "earnings":    None,   # universal — all companies report earnings
+    "fda":         [       # only healthcare/pharma/biotech/medical devices
+                    "health", "pharma", "biotech", "drug", "life science",
+                    "medical", "clinical", "therapeut", "diagnostic",
+                    "biolog", "genomic",
+                   ],
+    "legal":       None,   # any company can face litigation
+    "buyout":      None,   # any company can be acquired
+    "partnership": None,   # any company can sign deals
+    "squeeze":     None,   # short squeeze is universal
+    "breakout":    None,   # technical signal, universal
+    "geopolitical":[       # sectors directly exposed to macro/trade events
+                    "energy", "material", "defense", "industrial",
+                    "semiconductor", "technology", "mining", "oil",
+                    "chemical", "aerospace", "transport",
+                   ],
+    "rate":        [       # rate-sensitive sectors only
+                    "financial", "bank", "real estate", "reit", "utility",
+                    "insurance", "mortgage", "savings", "trust",
+                   ],
+}
+
 # ----------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------
@@ -746,6 +788,16 @@ def prescore_screener(df: pd.DataFrame) -> pd.Series:
     return out
 
 
+def sector_allows(catalyst: str, sector: str) -> bool:
+    """Return True if this catalyst is valid for the stock's sector.
+    Option 1: sector whitelist check. None whitelist = universal."""
+    whitelist = CATALYST_SECTOR_WHITELIST.get(catalyst)
+    if whitelist is None:
+        return True  # no restriction
+    s = sector.lower()
+    return any(w in s for w in whitelist)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_fuel(ticker: str) -> dict:
     """Slow-moving 'primed to move' data: short interest, float,
@@ -765,6 +817,7 @@ def fetch_fuel(ticker: str) -> dict:
         "catalyst_tags": [],         # list of detected catalyst types
         "catalyst_score": 0.0,       # 0-100 composite catalyst sub-score
         "bimodal_event": False,      # binary event within ±3 days
+        "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
     }
     try:
         tk = yf.Ticker(ticker)
@@ -884,7 +937,18 @@ def fetch_fuel(ticker: str) -> dict:
             out["news_sentiment"] = sent
             out["latest_headline"] = latest
             # Tag any catalyst with at least 1 keyword hit
-            out["catalyst_tags"] = [c for c, h in cat_hits.items() if h > 0]
+            # Apply Option 1 (sector whitelist) + Option 2 (min keyword hits)
+            sector = out.get("sector", "")
+            out["catalyst_tags"] = [
+                c for c, h in cat_hits.items()
+                if h >= CATALYST_MIN_HITS.get(c, 1)          # Option 2: threshold
+                and sector_allows(c, sector)                   # Option 1: sector
+            ]
+            # Track which catalysts were suppressed for transparency
+            out["catalyst_suppressed"] = [
+                c for c, h in cat_hits.items()
+                if h > 0 and c not in out["catalyst_tags"]
+            ]
         except Exception:
             pass
 
@@ -1337,7 +1401,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.5 - dtc gauge"
+APP_VERSION = "v2.6 - catalyst filters"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1423,16 +1487,17 @@ for r in (ok if not paused else []):
 REFERENCE_KEY = [
     ("Catalyst signals - inside Fuel score", "#f5a623", [
         ("Earnings", "Days until next earnings report. 0-2 days = binary event, highest score. Score decays with distance.", "0-2d = peak score"),
-        ("FDA", "FDA approval/rejection keyword detected in news. Binary event: move can be 30-100%+ either direction.", "most explosive"),
-        ("M&A / Buyout", "Merger, acquisition, or takeover keywords in news. Premium usually materialises fast.", "instant catalyst"),
-        ("Partnership", "New contract, collaboration, licensing, or supply agreement detected in news.", "15 pts"),
-        ("Legal", "Lawsuit verdict, settlement, or regulatory action detected in news.", "binary risk"),
-        ("Squeeze", "Short squeeze keywords + Days-to-Cover (DTC): shares short / avg daily volume. DTC >=10 = serious setup.", "DTC >=5 adds pts"),
-        ("Breakout", "52-week high or breakout keywords detected in news alongside live HOD signal.", "confirmation"),
-        ("Geopolitical", "Tariffs, sanctions, energy crisis, defense contract, or conflict keywords in news.", "sector-specific"),
-        ("Rate", "Fed, FOMC, interest rate, CPI/PPI keywords — affects rate-sensitive sectors most.", "macro context"),
+        ("FDA", "Healthcare/Pharma/Biotech only. Requires 2+ FDA-specific keywords (e.g. fda + approval). Sector-gated to prevent false positives on unrelated stocks.", "sector-gated, 2 hits"),
+        ("M&A / Buyout", "Any sector. Requires 2+ M&A keywords (e.g. acquire + merger) to avoid single-word false positives.", "2 hits required"),
+        ("Partnership", "Any sector. Requires 2+ partnership keywords — single words like agreement are too common alone.", "2 hits required"),
+        ("Legal", "Any sector. Requires 2+ legal keywords to confirm a real litigation event.", "2 hits required"),
+        ("Squeeze", "Any sector. 1 specific squeeze keyword sufficient — these terms are precise. Backed by DTC gauge.", "1 hit, see DTC"),
+        ("Breakout", "Any sector. 1 keyword sufficient — technical terms are unambiguous.", "1 hit"),
+        ("Geopolitical", "Energy, Materials, Defense, Industrials, Semis only. Requires 2+ keywords — broad terms like oil or china appear in unrelated news.", "sector-gated, 2 hits"),
+        ("Rate", "Financials, Banks, REITs, Utilities, Insurance only. Requires 2+ keywords — fed/inflation appear everywhere.", "sector-gated, 2 hits"),
         ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
-        ("DTC", "Days to Cover = shares short ÷ avg daily volume. Shown as a fuel gauge bar: gray=low, yellow=moderate (5-7d), amber=high (7-10d), red=extreme (10d+). Extreme means shorts need 10+ days to exit — explosive squeeze potential.", "10d+ = extreme"),
+        ("DTC", "Days to Cover gauge: shares short / avg daily volume. Bar fills red at 10d+ (extreme), amber 7-10d (high), yellow 5-7d (moderate).", "10d+ = extreme"),
+        ("Filtered", "Catalysts detected in headlines but blocked by sector whitelist or keyword threshold appear struck-through below the chart. Shows what was caught and why it was filtered.", "transparency"),
     ]),
     ("The scores", "#c8daf0", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
@@ -1830,6 +1895,23 @@ with left:
                 combined = plain_html + ("&nbsp;" if plain_html and (dtc_html or cat_html) else "") + dtc_html + cat_html
                 if combined:
                     st.markdown(combined, unsafe_allow_html=True)
+                # Show suppressed catalysts transparently
+                suppressed = f.get("catalyst_suppressed") or []
+                if suppressed:
+                    sup_html = " ".join(
+                        f"<span style='font-family:Space Mono,monospace;font-size:10px;"
+                        f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
+                        f"padding:1px 6px;margin-right:4px;text-decoration:line-through'>"
+                        f"{s.upper()}</span>"
+                        for s in suppressed
+                    )
+                    sector_str = f.get("sector", "unknown sector")
+                    st.markdown(
+                        f"<div style='margin-top:4px;font-family:Space Mono,monospace;"
+                        f"font-size:10px;color:#4a6a8a'>filtered (sector: {sector_str}): "
+                        f"{sup_html}</div>",
+                        unsafe_allow_html=True,
+                    )
                 if f.get("latest_headline"):
                     st.caption(f"Latest: {f['latest_headline']}")
 
