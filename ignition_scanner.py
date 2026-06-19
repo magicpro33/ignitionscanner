@@ -53,48 +53,82 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap');
+/* =====================================================================
+   AI UPSCALE BRAND THEME
+   Fonts  : Rajdhani (headings) + Plus Jakarta Sans (body) + Space Mono (data)
+   Palette:
+     --bg-deep   #07111f   deepest background (page)
+     --bg-card   #0d1e33   card / row surfaces
+     --bg-mid    #122540   borders / dividers
+     --bg-hover  #1a3050   hover / selection
+     --amber     #f5a623   primary accent (amber)
+     --amber-dim #c47d0e   dimmed amber
+     --amber-glow rgba(245,166,35,0.35)
+     --text-hi   #e8f0fa   high-contrast text
+     --text-mid  #8baac8   medium text / labels
+     --text-lo   #4a6a8a   low / placeholder text
+     --green     #3ddc84   ignition positive
+     --red       #e05555   alert / reversal
+     --teal      #29b6c8   secondary accent
+     --navy-lt   #1e3a5f   light navy highlight
+===================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap');
 
-html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background: #0a0e14; }
+html, body, [class*="css"]  { font-family: 'Plus Jakarta Sans', sans-serif; }
+.stApp                       { background: #07111f; }
 
-h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; }
+h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
+             letter-spacing: 0.8px; color: #e8f0fa; }
 
 .metric-mono, .stDataFrame, code { font-family: 'Space Mono', monospace !important; }
 
+/* ── Streamlit widget overrides ───────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"]  { background: #0d1e33; border-radius: 8px; gap: 2px; }
+.stTabs [data-baseweb="tab"]       { color: #8baac8; font-family: 'Rajdhani', sans-serif;
+                                      font-weight: 600; font-size: 15px; letter-spacing: 0.5px; }
+.stTabs [aria-selected="true"]     { color: #f5a623 !important; border-bottom: 2px solid #f5a623; }
+.stTabs [data-baseweb="tab-panel"] { background: transparent; }
+
+/* ── IGNITING banner ─────────────────────────────────────────────── */
 .ignite-banner {
-    background: linear-gradient(90deg, #2a1205, #3d1a05);
-    border: 1px solid #ff6b1a;
+    background: linear-gradient(90deg, #1a1000, #261800);
+    border: 1px solid #f5a623;
     border-radius: 10px;
     padding: 14px 18px;
     margin-bottom: 10px;
     font-family: 'Space Mono', monospace;
-    color: #ffb380;
-    animation: pulse 1.6s infinite;
+    color: #f5c96a;
+    animation: amber-pulse 1.6s infinite;
 }
-@keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(255,107,26,0.45); }
-    70% { box-shadow: 0 0 0 12px rgba(255,107,26,0); }
-    100% { box-shadow: 0 0 0 0 rgba(255,107,26,0); }
+@keyframes amber-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(245,166,35,0.45); }
+    70%  { box-shadow: 0 0 0 12px rgba(245,166,35,0); }
+    100% { box-shadow: 0 0 0 0 rgba(245,166,35,0); }
 }
+
+/* ── GAP REVERSAL banner ─────────────────────────────────────────── */
 .ignite-banner.rev {
-    background: linear-gradient(90deg, #170f2a, #221540);
-    border-color: #8b5cf6;
-    color: #c4b0f5;
+    background: linear-gradient(90deg, #0e1a2a, #152030);
+    border-color: #29b6c8;
+    color: #7dd8e4;
     animation: none;
 }
-.crow.rev { border-color: #8b5cf6; }
-.cflag.rev { color: #8b5cf6; border-color: #8b5cf6; }
+.crow.rev  { border-color: #29b6c8; }
+.cflag.rev { color: #29b6c8; border-color: #29b6c8; }
+
+/* ── Alert feed rows ─────────────────────────────────────────────── */
 .alert-row {
     font-family: 'Space Mono', monospace;
     font-size: 13px;
-    color: #d8e0ea;
+    color: #c8daf0;
     padding: 6px 10px;
-    border-left: 3px solid #ff6b1a;
-    background: #11161f;
+    border-left: 3px solid #f5a623;
+    background: #0d1e33;
     margin-bottom: 4px;
     border-radius: 4px;
 }
+
+/* ── Plain info pills ────────────────────────────────────────────── */
 .fuel-tag {
     display: inline-block;
     font-family: 'Space Mono', monospace;
@@ -102,60 +136,70 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; 
     padding: 2px 8px;
     border-radius: 4px;
     margin-right: 6px;
-    background: #16202e;
-    border: 1px solid #2b3a4f;
-    color: #9fb6d0;
+    background: #0d1e33;
+    border: 1px solid #1e3a5f;
+    color: #8baac8;
 }
-.fuel-tag a { color: inherit; text-decoration: none; }
-.fuel-tag a:hover { text-decoration: underline; }
-/* Catalyst tag color classes */
-.ct-earnings  { background:#1a2e1a; border-color:#2a6b2a; color:#6ddb6d; }
-.ct-fda       { background:#2a1a2e; border-color:#7a2a8a; color:#d06de0; }
-.ct-buyout    { background:#2e2a1a; border-color:#9a7a1a; color:#e8c84a; }
-.ct-legal     { background:#2e1a1a; border-color:#8a3a3a; color:#e08080; }
-.ct-partnership { background:#1a2a2e; border-color:#1a6a8a; color:#4ac0e0; }
-.ct-squeeze   { background:#2e1f1a; border-color:#9a5a1a; color:#e09a4a; }
-.ct-breakout  { background:#1a2520; border-color:#1a7a4a; color:#4ae0a0; }
-.ct-geopolitical { background:#1f1a2e; border-color:#4a3a8a; color:#9a80d0; }
-.ct-rate      { background:#2e2a1f; border-color:#8a7a3a; color:#d0c060; }
-.ct-bimodal   { background:#2e2410; border-color:#f5b942; color:#f5b942; }
-.ct-dtc       { background:#1a2030; border-color:#3a6090; color:#70a0d0; }
+.fuel-tag a       { color: inherit; text-decoration: none; }
+.fuel-tag a:hover { text-decoration: underline; opacity: 0.85; }
+
+/* ── Catalyst tag color classes (navy-amber palette) ─────────────── */
+.ct-earnings     { background:#0d2215; border-color:#1e6b35; color:#4dd880; }
+.ct-fda          { background:#150d22; border-color:#6b35a0; color:#c07ae0; }
+.ct-buyout       { background:#211800; border-color:#c47d0e; color:#f5c040; }
+.ct-legal        { background:#220d0d; border-color:#a03535; color:#e07070; }
+.ct-partnership  { background:#07111f; border-color:#1e6a8a; color:#29b6c8; }
+.ct-squeeze      { background:#1f1200; border-color:#c47d0e; color:#f5a623; }
+.ct-breakout     { background:#071a10; border-color:#1a8040; color:#3ddc84; }
+.ct-geopolitical { background:#0d1020; border-color:#3a5090; color:#7090d0; }
+.ct-rate         { background:#1a1500; border-color:#907020; color:#d0b040; }
+.ct-bimodal      { background:#221800; border-color:#f5a623; color:#f5a623; }
+.ct-dtc          { background:#0a1828; border-color:#1e4a7a; color:#5090d0; }
+
+/* ── Compact card rows ───────────────────────────────────────────── */
 .crow {
-    background: #10151f;
-    border: 1px solid #1c2533;
+    background: #0d1e33;
+    border: 1px solid #1e3a5f;
     border-radius: 8px;
     padding: 8px 12px 9px 12px;
     margin-bottom: 6px;
 }
-.ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: 'DM Sans', sans-serif; }
-.ref-table td { padding: 8px 10px; border-bottom: 1px solid #1c2533; color: #d8e0ea; vertical-align: top; line-height: 1.5; }
-.ref-table .grp td { padding-top: 20px; padding-bottom: 6px; font-family: 'Syne', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 0.6px; border-bottom: 1px solid #2b3a4f; text-transform: uppercase; }
-.ref-table .trm { font-family: 'Space Mono', monospace; font-weight: 700; white-space: nowrap; color: #e8eef5; width: 120px; }
-.ref-table .lvl { font-family: 'Space Mono', monospace; color: #7e93ab; font-size: 12px; white-space: nowrap; width: 170px; }
-.ref-table .mng { color: #9fb6d0; }
-.crow.hot { border-color: #ff6b1a; }
-.cline {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    font-family: 'Space Mono', monospace;
-}
-.ctick { font-size: 17px; font-weight: 700; color: #e8eef5; letter-spacing: 0.5px; }
-.cflag {
-    font-size: 10px; color: #ff6b1a; border: 1px solid #ff6b1a;
-    border-radius: 4px; padding: 1px 6px; margin-left: 8px; vertical-align: middle;
-}
-.cscore { font-size: 20px; font-weight: 700; }
-.cbar {
-    height: 5px; background: #1c2533; border-radius: 3px;
-    margin: 6px 0 5px 0; overflow: hidden;
-}
-.cfill { height: 100%; border-radius: 3px; }
-.csub {
-    font-family: 'Space Mono', monospace;
-    font-size: 11.5px; color: #7e93ab;
-    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px;
-}
+.crow.hot { border-color: #f5a623;
+            box-shadow: 0 0 8px rgba(245,166,35,0.2); }
+
+/* ── Reference table ─────────────────────────────────────────────── */
+.ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px;
+             font-family: 'Plus Jakarta Sans', sans-serif; }
+.ref-table td  { padding: 8px 10px; border-bottom: 1px solid #122540;
+                 color: #c8daf0; vertical-align: top; line-height: 1.5; }
+.ref-table .grp td { padding-top: 20px; padding-bottom: 6px;
+                     font-family: 'Rajdhani', sans-serif; font-weight: 700;
+                     font-size: 14px; letter-spacing: 0.8px;
+                     border-bottom: 1px solid #1e3a5f; text-transform: uppercase; }
+.ref-table .trm { font-family: 'Space Mono', monospace; font-weight: 700;
+                  white-space: nowrap; color: #e8f0fa; width: 120px; }
+.ref-table .lvl { font-family: 'Space Mono', monospace; color: #4a6a8a;
+                  font-size: 12px; white-space: nowrap; width: 170px; }
+.ref-table .mng { color: #8baac8; }
+
+/* ── Card sub-elements ───────────────────────────────────────────── */
+.cline  { display: flex; align-items: baseline;
+          justify-content: space-between;
+          font-family: 'Space Mono', monospace; }
+.ctick  { font-size: 17px; font-weight: 700; color: #e8f0fa;
+          letter-spacing: 0.5px; font-family: 'Rajdhani', sans-serif; }
+.cflag  { font-size: 10px; color: #f5a623; border: 1px solid #f5a623;
+          border-radius: 4px; padding: 1px 6px;
+          margin-left: 8px; vertical-align: middle;
+          font-family: 'Space Mono', monospace; }
+.cscore { font-size: 20px; font-weight: 700;
+          font-family: 'Rajdhani', sans-serif; }
+.cbar   { height: 5px; background: #122540; border-radius: 3px;
+          margin: 6px 0 5px 0; overflow: hidden; }
+.cfill  { height: 100%; border-radius: 3px; }
+.csub   { font-family: 'Space Mono', monospace; font-size: 11.5px;
+          color: #4a6a8a; display: flex; justify-content: space-between;
+          flex-wrap: wrap; gap: 4px; }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -1190,13 +1234,13 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.0 - catalyst links"
+APP_VERSION = "v2.1 - brand"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
-    status = f"<span style='color:#f5b942'>PAUSED</span> &nbsp;last scan {last_scan}"
+    status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
 else:
     status = f"last scan {last_scan}"
-st.markdown(f"# IGNITION <span style='font-size:16px;color:#5b7089;font-family:Space Mono'>{status} &nbsp;|&nbsp; {APP_VERSION}</span>", unsafe_allow_html=True)
+st.markdown(f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>{status} &nbsp;|&nbsp; {APP_VERSION}</span>", unsafe_allow_html=True)
 st.caption("Catches the first minutes of a momentum move: volume ignition + price thrust + squeeze/insider/news fuel.")
 
 # ----------------------------------------------------------------------------
@@ -1272,7 +1316,7 @@ for r in (ok if not paused else []):
 # Reference key (rendered in its own tab)
 # ----------------------------------------------------------------------------
 REFERENCE_KEY = [
-    ("Catalyst signals - inside Fuel score", "#f5b942", [
+    ("Catalyst signals - inside Fuel score", "#f5a623", [
         ("Earnings", "Days until next earnings report. 0-2 days = binary event, highest score. Score decays with distance.", "0-2d = peak score"),
         ("FDA", "FDA approval/rejection keyword detected in news. Binary event: move can be 30-100%+ either direction.", "most explosive"),
         ("M&A / Buyout", "Merger, acquisition, or takeover keywords in news. Premium usually materialises fast.", "instant catalyst"),
@@ -1285,13 +1329,13 @@ REFERENCE_KEY = [
         ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
         ("DTC", "Days to Cover: shares short divided by average daily volume. How many days shorts need to exit.", ">=5d = fuel"),
     ]),
-    ("The scores", "#d8e0ea", [
+    ("The scores", "#c8daf0", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
         ("Ignition", "Is money flowing in right now (live, every refresh)", "jumps 30+ pts = act"),
         ("Fuel", "Is the stock primed for a big move (updates hourly)", "high + rising IGN = setup"),
         ("NightlyRank", "Grade from last night's screener dump - yesterday's homework vs today's live Score", "pool picked from top N"),
     ]),
-    ("Live ignition signals - 60% of Score", "#ff6b1a", [
+    ("Live ignition signals - 60% of Score", "#f5a623", [
         ("RVOL", "Today's volume vs 20-day norm, adjusted for the U-shaped intraday curve", "2x unusual, 5x explosive"),
         ("Surge", "Last 3 minutes' volume vs the session's average bar - the exact minutes buying hits", "2x+ = surge live"),
         ("Vel %/5m", "Price move over the last 5 minutes", "positive + growing"),
@@ -1301,14 +1345,14 @@ REFERENCE_KEY = [
         ("RSI5", "RSI(14) on 5-minute bars", "55-75 thrust, 75+ stretched"),
         ("MACD", "Fresh bullish cross on 5-minute bars confirms a trend flip", "cross = confirmation"),
     ]),
-    ("Fuel signals - 40% of Score", "#2dd4a7", [
+    ("Fuel signals - 40% of Score", "#3ddc84", [
         ("Short%Flt", "Short interest as % of float - forced buyers if price runs", "15%+ = squeeze fuel"),
         ("InsiderNet$", "Insider buys minus sells, last 90 days (SEC Form 4)", "positive = accumulating"),
         ("News48h", "Headlines in the last 48 hours - momentum needs a catalyst", "0 = no sustained move"),
         ("Float", "Tradable shares outstanding - small float means violent moves", "under 50M = explosive"),
         ("52wk dist", "Distance to the 52-week high - momentum lives near highs", "within 5% = best"),
     ]),
-    ("Flags and alerts", "#8b5cf6", [
+    ("Flags and alerts", "#29b6c8", [
         ("IGNITING", "All four fire at once on a flat/up day: RVOL >=2x, surge >=2x, positive velocity, new HOD or VWAP reclaim", "urgent push, orange"),
         ("GAP REV", "Same footprint but the stock is down 4%+ or gapped down 4%+ - a bounce inside a selloff, riskier trade", "high push, violet"),
         ("ALERT", "Score crossed your sidebar threshold; each ticker alerts once per day", "default push"),
@@ -1418,7 +1462,7 @@ def render_compact(rows_data):
     html = []
     for r in rows_data:
         sc = r["score"]
-        color = "#ff6b1a" if sc >= 70 else ("#f5b942" if sc >= 50 else "#8aa0b8")
+        color = "#f5a623" if sc >= 70 else ("#f5a623" if sc >= 50 else "#8aa0b8")
         hot = " hot" if r["igniting"] else (" rev" if r.get("gap_reversal") else "")
         if r["igniting"]:
             flag = "<span class='cflag'>IGNITING</span>"
@@ -1603,7 +1647,7 @@ with left:
             ), row=1, col=1)
             fig.add_trace(go.Scatter(
                 x=m1.index, y=vw, name="VWAP",
-                line=dict(color="#ff6b1a", width=1.6),
+                line=dict(color="#f5a623", width=1.6),
             ), row=1, col=1)
             colors = np.where(m1["Close"] >= m1["Open"], "#1f7a45", "#8a2b2b")
             fig.add_trace(go.Bar(
@@ -1611,7 +1655,7 @@ with left:
             ), row=2, col=1)
             fig.update_layout(
                 height=460, template="plotly_dark",
-                paper_bgcolor="#0a0e14", plot_bgcolor="#0d1320",
+                paper_bgcolor="#07111f", plot_bgcolor="#0d1e33",
                 margin=dict(l=10, r=10, t=10, b=10),
                 xaxis_rangeslider_visible=False, showlegend=False,
                 font=dict(family="Space Mono"),
@@ -1658,7 +1702,7 @@ with right:
         for a in st.session_state.alerts[:25]:
             kind = a.get("kind", "alert")
             flag = {"igniting": "IGNITING", "reversal": "GAP REV"}.get(kind, "ALERT")
-            border = "#8b5cf6" if kind == "reversal" else "#ff6b1a"
+            border = "#29b6c8" if kind == "reversal" else "#f5a623"
             price = f"${a['price']:.2f}" if a.get("price") else ""
             st.markdown(
                 f"<div class='alert-row' style='border-left-color:{border}'>"
