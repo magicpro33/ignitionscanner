@@ -187,18 +187,46 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
     transition: width 0.3s;
 }
 
-/* ── Compact card rows ───────────────────────────────────────────── */
+/* ── Card icon indicators ─────────────────────────────────────────── */
+.cicon { flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+.cicon svg { display:block; }
+/* ── Stat grid cards (Option 2) ──────────────────────────────────── */
 .crow {
     background: #0d1e33;
     border: 1px solid #1e3a5f;
-    border-radius: 8px;
-    padding: 8px 12px 9px 12px;
-    margin-bottom: 6px;
+    border-radius: 10px;
+    padding: 11px 13px 12px 13px;
+    margin-bottom: 8px;
 }
 .crow.hot { border-color: #f5a623;
-            box-shadow: 0 0 8px rgba(245,166,35,0.2); }
-
-/* ── Reference table ─────────────────────────────────────────────── */
+            box-shadow: 0 0 10px rgba(245,166,35,0.15); }
+.crow.rev { border-color: #29b6c8; }
+.chead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+.ctick  { font-size: 18px; font-weight: 700; color: #ffffff;
+          letter-spacing: 0.3px; font-family: 'Rajdhani', sans-serif; }
+.cflag  { font-size: 10px; color: #f5a623; border: 1px solid #f5a623;
+          border-radius: 4px; padding: 1px 6px;
+          margin-left: 8px; vertical-align: middle;
+          font-family: 'Space Mono', monospace; }
+.cflag.rev { color: #29b6c8; border-color: #29b6c8; }
+.cbar   { height: 4px; background: #122540; border-radius: 3px;
+          margin: 0 0 9px 0; overflow: hidden; }
+.cfill  { height: 100%; border-radius: 3px; }
+.cgrid  { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+          margin-bottom: 8px; }
+.ctile  { background: #07111f; border-radius: 6px; padding: 7px 9px; }
+.ctile-lbl { font-family: 'Space Mono', monospace; font-size: 10px;
+             letter-spacing: .6px; text-transform: uppercase;
+             color: #7a9ab8; margin-bottom: 3px; }
+.ctile-val { font-family: 'Space Mono', monospace; font-size: 13px;
+             font-weight: 700; color: #ffffff; line-height: 1.2; }
+.ctile-sub { font-family: 'Space Mono', monospace; font-size: 11px;
+             margin-top: 1px; }
 .ref-table { width: 100%; border-collapse: collapse; font-size: 13.5px;
              font-family: 'Plus Jakarta Sans', sans-serif; }
 .ref-table td  { padding: 8px 10px; border-bottom: 1px solid #122540;
@@ -1950,71 +1978,186 @@ def build_catalyst_tags_html(ticker: str, cat_tags: list, bimodal: bool,
     return "".join(parts)
 
 
+def _score_icon(sc, igniting, gap_rev):
+    """Return an SVG icon that communicates signal strength without a number.
+
+    IGNITING  → animated pulsing flame  (amber)
+    GAP REV   → wave/bounce arc         (teal)
+    Score 70+ → lightning bolt          (amber, solid)
+    Score 50+ → trending arrow up       (amber, outline)
+    Score <50 → flat dash               (grey)
+    """
+    if igniting:
+        # Flame — three teardrop paths
+        return (
+            "<svg width='28' height='28' viewBox='0 0 28 28' fill='none' "
+            "xmlns='http://www.w3.org/2000/svg' aria-label='Igniting'>"
+            "<style>@keyframes fp{0%,100%{opacity:1}50%{opacity:.55}}"
+            ".fp{animation:fp 1.4s ease-in-out infinite}</style>"
+            "<path class='fp' d='M14 3C14 3 8 9 8 15a6 6 0 0012 0c0-2.5-1.5-5-2.5-6.5"
+            "C17 10 16 11.5 14 12c1-2.5.5-6-0-9z' fill='#f5a623'/>"
+            "<path class='fp' style='animation-delay:.2s' d='M14 14c0 0-3 1.5-3 4a3 3 0 006 0"
+            "c0-1.5-1-2.8-1.5-3.5C15.5 15.5 15 16.5 14 17c.5-1.2.3-2.5 0-3z' fill='#ff9500'/>"
+            "</svg>"
+        )
+    elif gap_rev:
+        # Bounce arc — wave up from bottom
+        return (
+            "<svg width='28' height='28' viewBox='0 0 28 28' fill='none' "
+            "xmlns='http://www.w3.org/2000/svg' aria-label='Gap reversal'>"
+            "<path d='M4 20 Q9 8 14 16 Q19 24 24 12' stroke='#29b6c8' "
+            "stroke-width='2.5' stroke-linecap='round' fill='none'/>"
+            "<path d='M20 10 L24 12 L22 16' stroke='#29b6c8' "
+            "stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/>"
+            "</svg>"
+        )
+    elif sc >= 70:
+        # Lightning bolt — solid amber
+        return (
+            "<svg width='28' height='28' viewBox='0 0 28 28' fill='none' "
+            "xmlns='http://www.w3.org/2000/svg' aria-label='High score'>"
+            "<path d='M16 3L7 16h7l-2 9 10-13h-7l2-9z' fill='#f5a623'/>"
+            "</svg>"
+        )
+    elif sc >= 50:
+        # Trending up arrow — amber outline
+        return (
+            "<svg width='28' height='28' viewBox='0 0 28 28' fill='none' "
+            "xmlns='http://www.w3.org/2000/svg' aria-label='Rising score'>"
+            "<path d='M4 20L11 13l5 4 8-10' stroke='#f5a623' "
+            "stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/>"
+            "<path d='M19 7h5v5' stroke='#f5a623' "
+            "stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/>"
+            "</svg>"
+        )
+    else:
+        # Flat dash — grey, no momentum
+        return (
+            "<svg width='28' height='28' viewBox='0 0 28 28' fill='none' "
+            "xmlns='http://www.w3.org/2000/svg' aria-label='Low score'>"
+            "<path d='M6 14h16' stroke='#4a6a8a' "
+            "stroke-width='2.5' stroke-linecap='round'/>"
+            "</svg>"
+        )
+
+
 def render_compact(rows_data):
-    """Phone-friendly card rows: ticker + big color-coded score, a slim score
-    bar, and one line of key numbers. Readable at 380px wide."""
+    """Option 2 stat-grid cards: 2×2 metric tiles, icon indicator, no score number."""
     html = []
     for r in rows_data:
-        sc = r["score"]
-        color = "#f5a623" if sc >= 70 else ("#f5a623" if sc >= 50 else "#8aa0b8")
-        hot = " hot" if r["igniting"] else (" rev" if r.get("gap_reversal") else "")
-        if r["igniting"]:
+        sc   = r["score"]
+        ign  = r["igniting"]
+        grev = r.get("gap_reversal", False)
+        color = "#f5a623" if sc >= 50 else "#4a6a8a"
+        hot   = " hot" if ign else (" rev" if grev else "")
+
+        # ── Header flag badge ────────────────────────────────────────
+        if ign:
             flag = "<span class='cflag'>IGNITING</span>"
-        elif r.get("gap_reversal"):
+        elif grev:
             flag = "<span class='cflag rev'>GAP REV</span>"
         else:
             flag = ""
-        pre = r.get("pre_rank")
-        pre_txt = f"N {pre:.0f}" if pre is not None else ""
-        price_txt = (
-            f"<span style='font-size:15px;font-weight:700;color:#f5a623;font-family:Space Mono,monospace'>${r['price']:.2f}</span>"
-            if r.get("price") else ""
-        )
-        chg = r.get("chg_pct")
-        if chg is not None:
-            chg_color = "#3ddc84" if chg >= 0 else "#ff3333"
-            chg_txt = f"<span style='color:{chg_color};font-weight:600'>{chg:+.1f}%</span>"
-        else:
-            chg_txt = ""
-        # Analyst price target with % upside/downside
-        f_fuel = r["fuel"]
-        target_mean = f_fuel.get("target_mean")
-        target_txt = ""
-        if target_mean and r.get("price") and r["price"] > 0:
-            upside = (target_mean - r["price"]) / r["price"] * 100
-            if upside >= 10:
-                tgt_col = "#3ddc84"   # green  = meaningful upside
-            elif upside >= 0:
-                tgt_col = "#d0b040"   # amber  = modest upside
-            else:
-                tgt_col = "#ff3333"   # bright red = below target (downside)
-            target_txt = (
-                f"<span style='font-family:Space Mono,monospace;font-size:11px;"
-                f"color:{tgt_col}'>TGT ${target_mean:.2f} "
-                f"({upside:+.1f}%)</span>"
+
+        # ── Icon indicator (replaces score number) ───────────────────
+        icon_svg = _score_icon(sc, ign, grev)
+
+        # ── Score bar fill width ─────────────────────────────────────
+        bar_w = min(sc, 100)
+
+        # ── Price tile ───────────────────────────────────────────────
+        price  = r.get("price")
+        chg    = r.get("chg_pct")
+        if price:
+            chg_col = "#3ddc84" if (chg or 0) >= 0 else "#ff3333"
+            chg_str = f"<span class='ctile-sub' style='color:{chg_col}'>{chg:+.1f}%</span>" if chg is not None else ""
+            price_tile = (
+                f"<div class='ctile'>"
+                f"<div class='ctile-lbl'>Price</div>"
+                f"<div class='ctile-val' style='color:#f5a623'>${price:.2f}</div>"
+                f"{chg_str}</div>"
             )
-        rvol_txt = f"RVOL {r['rvol']:.1f}x" if r.get("rvol") else ""
-        f = r["fuel"]
-        cat_tags = f.get("catalyst_tags") or []
-        bimodal = f.get("bimodal_event", False)
-        ed = f.get("earnings_days")
-        dtc = f.get("days_to_cover")
+        else:
+            price_tile = "<div class='ctile'><div class='ctile-lbl'>Price</div><div class='ctile-val'>--</div></div>"
+
+        # ── Target tile ──────────────────────────────────────────────
+        fuel      = r["fuel"]
+        tgt       = fuel.get("target_mean")
+        if tgt and price and price > 0:
+            upside  = (tgt - price) / price * 100
+            tgt_col = "#3ddc84" if upside >= 10 else ("#d0b040" if upside >= 0 else "#ff3333")
+            sign    = "+" if upside >= 0 else ""
+            target_tile = (
+                f"<div class='ctile'>"
+                f"<div class='ctile-lbl'>Target</div>"
+                f"<div class='ctile-val' style='color:{tgt_col}'>${tgt:.2f}</div>"
+                f"<div class='ctile-sub' style='color:{tgt_col}'>{sign}{upside:.1f}% upside</div>"
+                f"</div>"
+            )
+        else:
+            target_tile = "<div class='ctile'><div class='ctile-lbl'>Target</div><div class='ctile-val' style='color:#4a6a8a'>--</div></div>"
+
+        # ── RVOL tile ────────────────────────────────────────────────
+        rvol = r.get("rvol", 0)
+        if rvol:
+            rvol_col = "#f5a623" if rvol >= 3 else ("#d0b040" if rvol >= 1.5 else "#7a9ab8")
+            rvol_lbl = "explosive" if rvol >= 5 else ("high" if rvol >= 2 else ("normal" if rvol >= 0.8 else "low"))
+            rvol_tile = (
+                f"<div class='ctile'>"
+                f"<div class='ctile-lbl'>RVOL</div>"
+                f"<div class='ctile-val' style='color:{rvol_col}'>{rvol:.1f}x</div>"
+                f"<div class='ctile-sub' style='color:{rvol_col}'>{rvol_lbl}</div>"
+                f"</div>"
+            )
+        else:
+            rvol_tile = "<div class='ctile'><div class='ctile-lbl'>RVOL</div><div class='ctile-val' style='color:#4a6a8a'>--</div></div>"
+
+        # ── Ignition sub-score tile ──────────────────────────────────
+        ign_sc   = r.get("ignition_score", 0)
+        fuel_sc  = r.get("fuel_score", 0)
+        ign_col  = "#f5a623" if ign_sc >= 70 else ("#d0b040" if ign_sc >= 50 else "#7a9ab8")
+        fuel_col = "#3ddc84" if fuel_sc >= 70 else ("#d0b040" if fuel_sc >= 50 else "#7a9ab8")
+        sub_tile = (
+            f"<div class='ctile'>"
+            f"<div class='ctile-lbl'>Signal</div>"
+            f"<div style='display:flex;gap:8px;margin-top:3px'>"
+            f"<div><div class='ctile-sub' style='color:#7a9ab8'>IGN</div>"
+            f"<div class='ctile-val' style='color:{ign_col};font-size:15px'>{ign_sc:.0f}</div></div>"
+            f"<div><div class='ctile-sub' style='color:#7a9ab8'>FUEL</div>"
+            f"<div class='ctile-val' style='color:{fuel_col};font-size:15px'>{fuel_sc:.0f}</div></div>"
+            f"</div></div>"
+        )
+
+        # ── Catalyst pills ───────────────────────────────────────────
+        cat_tags = fuel.get("catalyst_tags") or []
+        bimodal  = fuel.get("bimodal_event", False)
+        ed       = fuel.get("earnings_days")
+        dtc      = fuel.get("days_to_cover")
         tag_html = build_catalyst_tags_html(r["ticker"], cat_tags, bimodal, dtc, ed)
+
+        # ── Assemble card ────────────────────────────────────────────
         parts = [
             f"<div class='crow{hot}'>",
-            f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
-            f"<span class='cscore' style='color:{color}'>{sc:.0f}</span></div>",
-            f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>",
-            f"<div class='csub'>",
+            # Header: ticker + flag on left, icon on right
+            f"<div class='chead'>",
+            f"<span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
+            f"<div class='cicon'>{icon_svg}</div>",
+            f"</div>",
+            # Score bar
+            f"<div class='cbar'><div class='cfill' style='width:{bar_w:.0f}%;background:{color}'></div></div>",
+            # 2×2 stat grid
+            f"<div class='cgrid'>",
+            price_tile,
+            target_tile,
+            rvol_tile,
+            sub_tile,
+            f"</div>",
         ]
-        if pre_txt:    parts.append(f"<span>{pre_txt}</span>")
-        if rvol_txt:   parts.append(f"<span>{rvol_txt}</span>")
-        parts.append(f"<span>{price_txt} {chg_txt}</span>")
-        if target_txt: parts.append(f"<span style='margin-left:4px'>{target_txt}</span>")
-        parts.append("</div>")
-        if tag_html: parts.append(f"<div style='margin-top:4px'>{tag_html}</div>")
+        if tag_html:
+            parts.append(f"<div style='margin-top:2px'>{tag_html}</div>")
         parts.append("</div>")
         html.append("".join(parts))
+
     st.markdown("".join(html), unsafe_allow_html=True)
 
 
