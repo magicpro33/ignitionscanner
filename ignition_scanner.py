@@ -1321,29 +1321,52 @@ st.sidebar.markdown(
 st.sidebar.markdown("---")
 
 st.sidebar.markdown("<div class='sidebar-section'>Watchlist</div>", unsafe_allow_html=True)
+
+# ── Scan ALL presets toggle ──────────────────────────────────────────
+all_presets_mode = st.sidebar.toggle(
+    "Scan ALL presets",
+    value=False,
+    key="all_presets_mode",
+    help="Combines every ticker across all 8 sector presets into one scan "
+         "and shows the top N results by Score. Great for finding the single "
+         "best opportunity across your entire watchlist right now.",
+)
+
 source = st.sidebar.radio(
     "Watchlist source",
     ["Preset / Custom", "Nightly Screener Top 10"],
     index=0,
-    help="Preset / Custom: scan a hand-picked list. Nightly Screener Top 10: "
-         "your screener's nightly data dump is pre-ranked once per day to pin "
-         "a candidate pool; the pool is live-scanned and the 10 highest "
-         "scoring stocks are shown.",
+    disabled=all_presets_mode,
+    help="Preset / Custom: scan a hand-picked sector list. "
+         "Nightly Screener Top 10: uses your nightly dump to pre-rank candidates. "
+         "Disabled when Scan ALL presets is on.",
 )
 
-if source == "Nightly Screener Top 10":
+screener_mode = False
+if all_presets_mode:
+    # Build deduplicated mega-list across all 8 presets
+    seen, all_combined = set(), []
+    for tkrs in PRESETS.values():
+        for t in [x.strip().upper() for x in tkrs.split(",") if x.strip()]:
+            if t not in seen:
+                seen.add(t)
+                all_combined.append(t)
+    tickers = all_combined
+    st.sidebar.caption(
+        f"ALL PRESETS: {len(tickers)} unique tickers across "
+        f"{len(PRESETS)} sectors. Top N shown after scan."
+    )
+elif source == "Nightly Screener Top 10":
     screener_mode = True
     screener_url = st.sidebar.text_input("Dump URL", value=SCREENER_URL_DEFAULT)
     pool_size = st.sidebar.slider(
         "Candidate pool (pre-ranked from dump)", 20, 80, 40,
         help="The whole dump is pre-ranked by its own nightly signals; the top "
-             "N candidates get the live ignition scan, then the top 10 by "
-             "final score are shown.",
+             "N candidates get the live ignition scan.",
     )
     min_price = st.sidebar.number_input(
         "Min price filter", value=1.0, step=0.5,
-        help="Excludes stocks below this price from the candidate pool. "
-             "Filters out sub-$1 names with wide spreads and manipulation risk.",
+        help="Excludes stocks below this price from the candidate pool.",
     )
     tickers = []
     try:
@@ -1354,7 +1377,7 @@ if source == "Nightly Screener Top 10":
         st.sidebar.caption(
             f"Watchlist pinned for {day_key} from dump "
             f"({meta['n_tickers']} tickers, {meta['n_fields']} fields). "
-            f"Pool: {len(tickers)}. Live data from real-time feed only."
+            f"Pool: {len(tickers)}."
         )
         with st.sidebar.expander("Detected dump fields"):
             st.write(", ".join(meta["fields"]))
@@ -1362,13 +1385,29 @@ if source == "Nightly Screener Top 10":
     except Exception as e:
         st.sidebar.error(f"Could not load nightly dump: {e}")
 else:
-    preset = st.sidebar.selectbox("Watchlist preset", ["Custom"] + list(PRESETS.keys()), index=1)
+    preset = st.sidebar.selectbox(
+        "Sector preset",
+        ["Custom"] + list(PRESETS.keys()),
+        index=1,
+        help="Select a sector to scan, or choose Custom to enter your own tickers.",
+    )
     default_tickers = PRESETS.get(preset, "CCJ,SMR,NNE,OKLO,LEU,EU,UUUU,UROY,GEV,CEG")
-    tickers_raw = st.sidebar.text_area("Tickers (comma separated)", value=default_tickers, height=90)
-    tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
+    tickers_raw = st.sidebar.text_area(
+        "Tickers (comma separated)", value=default_tickers, height=90
+    )
+    tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:250]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
+
+# ── Top-N results slider ─────────────────────────────────────────────
+top_n = st.sidebar.slider(
+    "Results to show", 5, 30, 10,
+    help="How many stocks to display after the scan, ranked by Score. "
+         "Set to 5 to see only the hottest names, 30 for a full board. "
+         "Applies to all watchlist modes.",
+)
+
 alert_threshold = st.sidebar.slider(
     "Alert score threshold", 40, 95, 65,
     help="A ticker triggers an alert (feed entry + phone push) the first time "
@@ -1386,22 +1425,6 @@ show_all_cols = st.sidebar.toggle(
     help="Off: compact view (Ticker, Score, NightlyRank, Ignition, Fuel). "
          "On: every underlying metric - RVOL, Surge, Velocity, VWAP, HOD, RSI, "
          "short float, insider dollars, news count, and live signals.",
-)
-paused = st.sidebar.toggle(
-    "Pause scanning", value=False, key="paused",
-    help="Freezes the scanner: no rescans, no new alerts, and auto-refresh "
-         "stops. The last scan's results stay on screen. (Changing the chart "
-         "ticker can still fetch that one chart.) Flip off to resume.",
-)
-auto_refresh = st.sidebar.toggle(
-    "Auto-refresh", value=True,
-    help="Rescan automatically on the interval below. The page must stay open "
-         "(a minimized tab is fine) for scanning and phone alerts to keep running.",
-)
-refresh_secs = st.sidebar.slider(
-    "Refresh every (sec)", 30, 300, 60,
-    help="Live bars are cached ~55 seconds, so refreshing faster than 60s "
-         "mostly re-reads cache. 60s is the sweet spot.",
 )
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Notifications</div>", unsafe_allow_html=True)
@@ -1436,51 +1459,93 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.7 - watchlist"
+APP_VERSION = "v2.8 - on demand"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
-if paused:
-    status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
-else:
-    status = f"last scan {last_scan}"
-st.markdown(f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>{status} &nbsp;|&nbsp; {APP_VERSION}</span>", unsafe_allow_html=True)
+st.markdown(
+    f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>"
+    f"last scan {last_scan} &nbsp;|&nbsp; {APP_VERSION}</span>",
+    unsafe_allow_html=True,
+)
 st.caption("Catches the first minutes of a momentum move: volume ignition + price thrust + squeeze/insider/news fuel.")
 
 # ----------------------------------------------------------------------------
-# Scan (skipped while paused - last results are reused)
+# Scan — runs on first load, watchlist change, or Refresh button press
 # ----------------------------------------------------------------------------
-if paused and "last_results" in st.session_state:
-    results = st.session_state["last_results"]
-else:
+
+# Build a key representing current watchlist so we detect changes
+current_watchlist_key = ",".join(sorted(tickers))
+
+# Detect if the watchlist changed since last scan
+watchlist_changed = (
+    st.session_state.get("last_watchlist_key") != current_watchlist_key
+)
+
+# Refresh button (main area, above results)
+col_refresh, col_status = st.columns([1, 4])
+with col_refresh:
+    refresh_clicked = st.button(
+        "▶ Refresh scan",
+        type="primary",
+        help="Run a fresh scan of the current watchlist right now.",
+        use_container_width=True,
+    )
+with col_status:
+    last_scan = st.session_state.get("last_scan_time", "not yet scanned")
+    scan_count = len(st.session_state.get("last_results", []))
+    st.markdown(
+        f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
+        f"color:#4a6a8a'>last scan: {last_scan}"
+        + (f" &nbsp;·&nbsp; {scan_count} tickers scanned" if scan_count else "")
+        + ("&nbsp;&nbsp;<span style='color:#f5a623'>● watchlist changed</span>" if watchlist_changed and not refresh_clicked else "")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+should_scan = refresh_clicked or watchlist_changed or "last_results" not in st.session_state
+
+if should_scan:
     results = []
     progress = st.progress(0.0, text="Scanning...")
     for i, t in enumerate(tickers):
         results.append(compute_signals(t))
-        progress.progress((i + 1) / max(len(tickers), 1), text=f"Scanning {t}...")
+        progress.progress((i + 1) / max(len(tickers), 1), text=f"Scanning {t}…")
     progress.empty()
     st.session_state["last_results"] = results
     st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
+    st.session_state["last_watchlist_key"] = current_watchlist_key
+else:
+    results = st.session_state["last_results"]
 
 ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
 ok.sort(key=lambda r: r["score"], reverse=True)
 
+# Apply top-N limit (screener mode, all-presets mode, and normal mode all use it)
 if screener_mode:
     scanned_n = len(ok)
-    ok = ok[:10]
     pre_ranks = st.session_state.get("screener_pre")
     if pre_ranks is not None:
-        ok = [dict(r) for r in ok]  # copy before mutating cached dicts
+        ok = [dict(r) for r in ok[:top_n]]
         for r in ok:
             if r["ticker"] in pre_ranks.index:
                 r["pre_rank"] = float(pre_ranks[r["ticker"]])
+    else:
+        ok = ok[:top_n]
     st.caption(
         f"Nightly Screener mode: pre-ranked the full dump, live-scanned the top "
-        f"{scanned_n} candidates, showing the top 10 by ignition score."
+        f"{scanned_n} candidates, showing the top {top_n} by ignition score."
     )
+else:
+    ok = ok[:top_n]
+    if all_presets_mode:
+        st.caption(
+            f"All Presets mode: scanned {len(results)} unique tickers across "
+            f"{len(PRESETS)} sectors, showing top {top_n} by Score."
+        )
 
-# Register new alerts (skipped while paused - stale results must not re-alert)
+# Register new alerts (only on a fresh scan, not when reusing cached results)
 session_key = datetime.now().strftime("%Y%m%d")
-for r in (ok if not paused else []):
+for r in (ok if should_scan else []):
     key = f"{session_key}:{r['ticker']}"
     if (r["igniting"] or r["gap_reversal"] or r["score"] >= alert_threshold) and key not in st.session_state.alerted:
         st.session_state.alerted.add(key)
@@ -1976,6 +2041,4 @@ tab_scan.__exit__(None, None, None)
 # ----------------------------------------------------------------------------
 # Auto refresh
 # ----------------------------------------------------------------------------
-if auto_refresh and not paused:
-    time.sleep(refresh_secs)
-    st.rerun()
+# Auto-refresh removed: scan runs on demand via Refresh button only.
