@@ -146,7 +146,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .ct-earnings     { background:#0d2215; border-color:#1e6b35; color:#4dd880; }
 .ct-fda          { background:#150d22; border-color:#6b35a0; color:#c07ae0; }
 .ct-buyout       { background:#211800; border-color:#c47d0e; color:#f5c040; }
-.ct-legal        { background:#220d0d; border-color:#a03535; color:#e07070; }
+.ct-legal        { background:#220d0d; border-color:#a03535; color:#ff4444; }
 .ct-partnership  { background:#07111f; border-color:#1e6a8a; color:#29b6c8; }
 .ct-squeeze      { background:#1f1200; border-color:#c47d0e; color:#f5a623; }
 .ct-breakout     { background:#071a10; border-color:#1a8040; color:#3ddc84; }
@@ -271,8 +271,8 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
              color: #3ddc84 !important; }
 .stInfo    { background: #07111f !important; border-color: #1e3a5f !important;
              color: #b0c8e8 !important; }
-.stError   { background: #220d0d !important; border-color: #e05555 !important;
-             color: #e05555 !important; }
+.stError   { background: #220d0d !important; border-color: #ff3333 !important;
+             color: #ff3333 !important; }
 /* ── Selectbox / text area backgrounds ───────────────────────────── */
 [data-testid="stSelectbox"] > div,
 [data-testid="stTextArea"] textarea {
@@ -863,6 +863,7 @@ def fetch_fuel(ticker: str) -> dict:
         "insider_net_buy_usd": 0.0, "insider_buys": 0, "insider_sells": 0,
         "news_count_48h": 0, "news_sentiment": 0, "latest_headline": "",
         "high_52w": None, "name": ticker,
+        "target_mean": None,   # analyst mean price target
         # new catalyst fields
         "earnings_days": None,       # days until next earnings (negative = past)
         "days_to_cover": None,       # short interest / avg daily vol
@@ -885,6 +886,7 @@ def fetch_fuel(ticker: str) -> dict:
         out["float_shares"] = info.get("floatShares")
         out["high_52w"] = info.get("fiftyTwoWeekHigh")
         out["name"] = info.get("shortName") or ticker
+        out["target_mean"] = info.get("targetMeanPrice")
         out["sector"] = info.get("sector") or ""
 
         # Days to cover (short interest / avg daily volume)
@@ -1610,7 +1612,7 @@ for r in (ok if should_scan else []):
 # ----------------------------------------------------------------------------
 def az_pill(label, good):
     bg = "#0d2215" if good is True else ("#220d0d" if good is False else "#1a1500")
-    col = "#4dd880" if good is True else ("#e07070" if good is False else "#d0b040")
+    col = "#4dd880" if good is True else ("#ff4444" if good is False else "#d0b040")
     bc  = "#1e6b35" if good is True else ("#a03535" if good is False else "#907020")
     return (f"<span style='display:inline-block;background:{bg};color:{col};"
             f"border:1px solid {bc};border-radius:4px;font-family:Space Mono,monospace;"
@@ -1620,7 +1622,7 @@ def az_pill(label, good):
 def az_tag(v, hi, lo, fmt="{:.2f}", suffix=""):
     try:
         fv = float(v)
-        col = "#4dd880" if fv >= hi else ("#d0b040" if fv >= lo else "#e07070")
+        col = "#4dd880" if fv >= hi else ("#d0b040" if fv >= lo else "#ff4444")
         return f"<span style='font-family:Space Mono,monospace;color:{col}'>{fmt.format(fv)}{suffix}</span>"
     except Exception:
         return "--"
@@ -1643,7 +1645,7 @@ def az_section(title):
 
 def pct_color(v):
     if v is None: return "--"
-    col = "#4dd880" if v >= 0 else "#e07070"
+    col = "#4dd880" if v >= 0 else "#ff4444"
     return f"<span style='font-family:Space Mono,monospace;color:{col}'>{'+' if v >= 0 else ''}{v:.2f}%</span>"
 
 
@@ -1901,7 +1903,7 @@ def dtc_gauge_pill(ticker: str, dtc: float) -> str:
     url = f"https://finviz.com/quote.ashx?t={ticker}"
     pct = min(dtc / 15.0, 1.0) * 100
     if dtc >= 10:
-        color = "#e05555"   # red  = extreme squeeze fuel
+        color = "#ff3333"   # red  = extreme squeeze fuel
         label = "SQUEEZE"
         intensity = "EXTREME"
     elif dtc >= 7:
@@ -1970,10 +1972,27 @@ def render_compact(rows_data):
         )
         chg = r.get("chg_pct")
         if chg is not None:
-            chg_color = "#3ddc84" if chg >= 0 else "#e05555"
-            chg_txt = f"<span style='color:{chg_color}'>{chg:+.1f}%</span>"
+            chg_color = "#3ddc84" if chg >= 0 else "#ff3333"
+            chg_txt = f"<span style='color:{chg_color};font-weight:600'>{chg:+.1f}%</span>"
         else:
             chg_txt = ""
+        # Analyst price target with % upside/downside
+        f_fuel = r["fuel"]
+        target_mean = f_fuel.get("target_mean")
+        target_txt = ""
+        if target_mean and r.get("price") and r["price"] > 0:
+            upside = (target_mean - r["price"]) / r["price"] * 100
+            if upside >= 10:
+                tgt_col = "#3ddc84"   # green  = meaningful upside
+            elif upside >= 0:
+                tgt_col = "#d0b040"   # amber  = modest upside
+            else:
+                tgt_col = "#ff3333"   # bright red = below target (downside)
+            target_txt = (
+                f"<span style='font-family:Space Mono,monospace;font-size:11px;"
+                f"color:{tgt_col}'>TGT ${target_mean:.2f} "
+                f"({upside:+.1f}%)</span>"
+            )
         rvol_txt = f"RVOL {r['rvol']:.1f}x" if r.get("rvol") else ""
         f = r["fuel"]
         cat_tags = f.get("catalyst_tags") or []
@@ -1988,9 +2007,11 @@ def render_compact(rows_data):
             f"<div class='cbar'><div class='cfill' style='width:{min(sc, 100):.0f}%;background:{color}'></div></div>",
             f"<div class='csub'>",
         ]
-        if pre_txt:  parts.append(f"<span>{pre_txt}</span>")
-        if rvol_txt: parts.append(f"<span>{rvol_txt}</span>")
-        parts.append(f"<span>{price_txt} {chg_txt}</span></div>")
+        if pre_txt:    parts.append(f"<span>{pre_txt}</span>")
+        if rvol_txt:   parts.append(f"<span>{rvol_txt}</span>")
+        parts.append(f"<span>{price_txt} {chg_txt}</span>")
+        if target_txt: parts.append(f"<span style='margin-left:4px'>{target_txt}</span>")
+        parts.append("</div>")
         if tag_html: parts.append(f"<div style='margin-top:4px'>{tag_html}</div>")
         parts.append("</div>")
         html.append("".join(parts))
@@ -2300,7 +2321,7 @@ else:
             pct_pos = max(0.0, min(1.0, (px - lo52) / (hi52 - lo52))) if hi52 != lo52 else 0.5
             bar_pct = int(pct_pos * 100)
             # Color: near low=red, mid=amber, near high=green
-            bar_col = "#4dd880" if pct_pos > 0.7 else ("#d0b040" if pct_pos > 0.35 else "#e07070")
+            bar_col = "#4dd880" if pct_pos > 0.7 else ("#d0b040" if pct_pos > 0.35 else "#ff4444")
             st.markdown(
                 f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
                 f"padding:14px 16px;margin-bottom:12px'>"
@@ -2323,7 +2344,7 @@ else:
             bw = bb_upper - bb_lower
             bpos = max(0.0, min(1.0, (px - bb_lower) / bw)) if bw > 0 else 0.5
             bpct = int(bpos * 100)
-            bcol = "#e07070" if bpos > 0.85 else ("#4dd880" if bpos < 0.15 else "#8baac8")
+            bcol = "#ff4444" if bpos > 0.85 else ("#4dd880" if bpos < 0.15 else "#8baac8")
             bb_label = "Near upper band (overbought)" if bpos > 0.85 else ("Near lower band (oversold)" if bpos < 0.15 else "Inside bands (neutral)")
             st.markdown(
                 f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
@@ -2359,23 +2380,23 @@ else:
         tech_rows = []
         if rsi_v is not None:
             if rsi_v < 30:    ri, rc = "Oversold — potential bounce", "#4dd880"
-            elif rsi_v < 45:  ri, rc = "Weak — losing momentum", "#e07070"
+            elif rsi_v < 45:  ri, rc = "Weak — losing momentum", "#ff4444"
             elif rsi_v < 55:  ri, rc = "Neutral — no clear direction", "#8baac8"
             elif rsi_v < 70:  ri, rc = "Strong — uptrend confirmed", "#4dd880"
-            else:             ri, rc = "Overbought — pullback possible", "#e07070"
+            else:             ri, rc = "Overbought — pullback possible", "#ff4444"
             tech_rows.append(mrow("RSI (14d)", "Relative Strength Index 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = momentum sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#7a9ab8'>{ri}</span>"))
         if macd_v is not None:
             mi = "Bullish — momentum building" if macd_v > macd_s else "Bearish — momentum fading"
-            mc2 = "#4dd880" if macd_v > macd_s else "#e07070"
+            mc2 = "#4dd880" if macd_v > macd_s else "#ff4444"
             tech_rows.append(mrow("MACD", "Moving Average Convergence Divergence. MACD above signal line = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#7a9ab8'>{mi}</span>"))
         if ma50_v and px:
             pvs = (px - ma50_v) / ma50_v * 100
             m5i = "Extended — may be overbought" if pvs > 5 else ("Just above — ideal zone" if pvs > 0 else ("Just below — watch reclaim" if pvs > -5 else "Well below — downtrend"))
-            m5c = "#4dd880" if 0 < pvs < 5 else ("#d0b040" if pvs > 5 else ("#d0b040" if pvs > -5 else "#e07070"))
+            m5c = "#4dd880" if 0 < pvs < 5 else ("#d0b040" if pvs > 5 else ("#d0b040" if pvs > -5 else "#ff4444"))
             tech_rows.append(mrow("50-Day MA", "50-Day Moving Average. Price just above = support. Just below = watch for reclaim.", f"${ma50_v:.2f} <span style='color:{m5c};font-size:11px'>({'+' if pvs >= 0 else ''}{pvs:.1f}%)</span>"))
         if ma200_v:
             m2i = "Golden Cross — long-term uptrend" if (ma50_v and ma50_v > ma200_v) else "Death Cross — long-term downtrend"
-            m2c = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#e07070"
+            m2c = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#ff4444"
             tech_rows.append(mrow("200-Day MA", "200-Day Moving Average. Golden Cross (50MA above 200MA) = major bull signal.", f"${ma200_v:.2f} <span style='font-size:11px;color:{m2c}'>{m2i}</span>"))
         if vol_avg and vol_td:
             vr = vol_td / vol_avg
@@ -2458,11 +2479,11 @@ else:
 
         if am:
             az_section("Analyst Consensus")
-            rcol = "#4dd880" if "buy" in recky.lower() else ("#e07070" if "sell" in recky.lower() else "#d0b040")
+            rcol = "#4dd880" if "buy" in recky.lower() else ("#ff4444" if "sell" in recky.lower() else "#d0b040")
             rdisp = recky.replace("_", " ").title() if recky else "--"
             an_rows = [
                 mrow("Recommendation", "Wall Street consensus: Strong Buy / Buy / Hold / Sell. Aggregates all analyst ratings.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#7a9ab8'>({nana} analysts)</span>"),
-                mrow("Mean Target", "Average 12-month analyst price target. Implies expected upside/downside from current price.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#e07070'}'>({'+' if aus and aus >= 0 else ''}{aus:.1f}%)</span>" if aus else "")),
+                mrow("Mean Target", "Average 12-month analyst price target. Implies expected upside/downside from current price.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#ff4444'}'>({'+' if aus and aus >= 0 else ''}{aus:.1f}%)</span>" if aus else "")),
                 mrow("Target Range", "Low-to-high analyst target spread. Wide range = high uncertainty. Narrow = strong consensus.", f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
             ]
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(an_rows)}</tbody></table>", unsafe_allow_html=True)
