@@ -32,6 +32,7 @@ import math
 import re
 import gzip
 import json
+import decimal
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -200,6 +201,54 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .csub   { font-family: 'Space Mono', monospace; font-size: 11.5px;
           color: #4a6a8a; display: flex; justify-content: space-between;
           flex-wrap: wrap; gap: 4px; }
+/* ── Sidebar brand header ────────────────────────────────────────── */
+[data-testid="stSidebar"] { background: #07111f; border-right: 1px solid #1e3a5f; }
+[data-testid="stSidebar"] .stMarkdown p { color: #8baac8; font-size: 13px; }
+[data-testid="stSidebar"] label { color: #c8daf0 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important; font-size: 13px; }
+[data-testid="stSidebar"] .stSlider span { color: #8baac8 !important; }
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] .stSelectbox label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] .stTextArea label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] .stNumberInput label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] .stToggle label { color: #c8daf0 !important; }
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] hr {
+    border-color: #1e3a5f; margin: 10px 0; }
+.sidebar-section {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #4a6a8a;
+    margin: 14px 0 6px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #1e3a5f;
+}
+/* ── Streamlit caption color override ───────────────────────────── */
+.stCaption, [data-testid="stCaptionContainer"] { color: #4a6a8a !important; }
+/* ── Progress bar brand color ────────────────────────────────────── */
+.stProgress > div > div { background-color: #f5a623 !important; }
+/* ── Button brand style ──────────────────────────────────────────── */
+.stButton button {
+    background: #0d1e33; border: 1px solid #1e3a5f; color: #8baac8;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    border-radius: 6px; transition: all 0.2s;
+}
+.stButton button:hover { border-color: #f5a623; color: #f5a623; }
+/* ── Success / info / error boxes ────────────────────────────────── */
+.stSuccess { background: #071a10 !important; border-color: #3ddc84 !important;
+             color: #3ddc84 !important; }
+.stInfo    { background: #07111f !important; border-color: #1e3a5f !important;
+             color: #8baac8 !important; }
+.stError   { background: #220d0d !important; border-color: #e05555 !important;
+             color: #e05555 !important; }
+/* ── Selectbox / text area backgrounds ───────────────────────────── */
+[data-testid="stSelectbox"] > div,
+[data-testid="stTextArea"] textarea {
+    background: #0d1e33 !important; border-color: #1e3a5f !important;
+    color: #c8daf0 !important;
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -366,7 +415,8 @@ def send_ntfy(title: str, message: str, priority: str = "default", tags: str = "
             timeout=5,
         )
         return True
-    except Exception:
+    except Exception as _ntfy_err:
+        st.session_state["ntfy_last_error"] = str(_ntfy_err)
         return False
 
 
@@ -383,7 +433,8 @@ def _alpaca_bars(ticker: str, timeframe: str, start_iso: str, key: str, secret: 
         "sort": "asc",
     }
     rows = []
-    while True:
+    _page_limit = 50  # safety guard: max 50 pages (~500k bars) before bail
+    for _ in range(_page_limit):
         resp = requests.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -417,9 +468,10 @@ def fetch_intraday(ticker: str):
     result: thin tickers can come back nearly empty on the free IEX feed, so
     anything insufficient falls back to Yahoo, and the better source wins."""
     m1_a = m5_a = None
-    if alpaca_keys():
+    _ak = alpaca_keys()
+    if _ak:
         try:
-            k, s = alpaca_keys()
+            k, s = _ak
             today = datetime.now(timezone.utc) - timedelta(hours=24)
             week = datetime.now(timezone.utc) - timedelta(days=7)
             m1_a = _alpaca_bars(ticker, "1Min", today.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
@@ -454,9 +506,10 @@ def fetch_daily(ticker: str):
     Tries Alpaca first when keys are configured, validates, falls back to
     Yahoo, and keeps whichever source has more history."""
     d_a = None
-    if alpaca_keys():
+    _ak = alpaca_keys()
+    if _ak:
         try:
-            k, s = alpaca_keys()
+            k, s = _ak
             start = datetime.now(timezone.utc) - timedelta(days=100)
             d_a = _alpaca_bars(ticker, "1Day", start.strftime("%Y-%m-%dT%H:%M:%SZ"), k, s)
         except Exception:
@@ -505,7 +558,6 @@ def load_screener_dump(url: str) -> pd.DataFrame:
     parsed record-by-record with ijson, so the multi-hundred-MB decompressed
     JSON never exists in RAM at once. This matters on Streamlit Cloud, which
     kills the container (-> 'no response from server') around ~1 GB."""
-    import decimal
     records = []
     try:
         import ijson
@@ -1122,6 +1174,18 @@ st.sidebar.caption("Momentum ignition scanner")
 
 preset = None
 screener_mode = False
+st.sidebar.markdown(
+    "<div style='padding:12px 4px 8px;'>"
+    "<div style='font-family:Rajdhani,sans-serif;font-size:20px;font-weight:700;"
+    "color:#f5a623;letter-spacing:1px'>AI UPSCALE</div>"
+    "<div style='font-family:\"Plus Jakarta Sans\",sans-serif;font-size:11px;"
+    "color:#4a6a8a;letter-spacing:0.5px'>IGNITION · Momentum Scanner</div>"
+    "</div>",
+    unsafe_allow_html=True,
+)
+st.sidebar.markdown("---")
+
+st.sidebar.markdown("<div class='sidebar-section'>Watchlist</div>", unsafe_allow_html=True)
 source = st.sidebar.radio(
     "Watchlist source",
     ["Preset / Custom", "Nightly Screener Top 10"],
@@ -1169,6 +1233,7 @@ else:
     tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
 alert_threshold = st.sidebar.slider(
     "Alert score threshold", 40, 95, 65,
     help="A ticker triggers an alert (feed entry + phone push) the first time "
@@ -1204,6 +1269,7 @@ refresh_secs = st.sidebar.slider(
          "mostly re-reads cache. 60s is the sweet spot.",
 )
 st.sidebar.markdown("---")
+st.sidebar.markdown("<div class='sidebar-section'>Notifications</div>", unsafe_allow_html=True)
 if ntfy_config():
     notify_on = st.sidebar.toggle("Phone notifications (ntfy)", value=True)
     if st.sidebar.button("Send test notification"):
@@ -1217,6 +1283,7 @@ else:
     st.sidebar.info("Phone alerts off: add NTFY_TOPIC to secrets to enable ntfy push.")
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("<div class='sidebar-section'>Data feed</div>", unsafe_allow_html=True)
 if alpaca_keys():
     st.sidebar.success("Data feed: Alpaca (real-time IEX)")
 else:
@@ -1234,7 +1301,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.2 - bugfix"
+APP_VERSION = "v2.3 - audit"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1266,9 +1333,11 @@ if screener_mode:
     scanned_n = len(ok)
     ok = ok[:10]
     pre_ranks = st.session_state.get("screener_pre")
-    for r in ok:
-        if pre_ranks is not None and r["ticker"] in pre_ranks.index:
-            r["pre_rank"] = float(pre_ranks[r["ticker"]])
+    if pre_ranks is not None:
+        ok = [dict(r) for r in ok]  # copy before mutating cached dicts
+        for r in ok:
+            if r["ticker"] in pre_ranks.index:
+                r["pre_rank"] = float(pre_ranks[r["ticker"]])
     st.caption(
         f"Nightly Screener mode: pre-ranked the full dump, live-scanned the top "
         f"{scanned_n} candidates, showing the top 10 by ignition score."
@@ -1354,7 +1423,7 @@ REFERENCE_KEY = [
     ]),
     ("Flags and alerts", "#29b6c8", [
         ("IGNITING", "All four fire at once on a flat/up day: RVOL >=2x, surge >=2x, positive velocity, new HOD or VWAP reclaim", "urgent push, orange"),
-        ("GAP REV", "Same footprint but the stock is down 4%+ or gapped down 4%+ - a bounce inside a selloff, riskier trade", "high push, violet"),
+        ("GAP REV", "Same footprint but the stock is down 4%+ or gapped down 4%+ - a bounce inside a selloff, riskier trade", "high push, teal"),
         ("ALERT", "Score crossed your sidebar threshold; each ticker alerts once per day", "default push"),
     ]),
 ]
@@ -1601,7 +1670,7 @@ minutes of a real momentum leg:
 - A new high of day OR a VWAP reclaim within the last few bars
 - AND the stock is NOT down hard on the day (no big gap-down, day change above -4%)
 
-**GAP REVERSAL banner (violet) / high-priority phone alert**
+**GAP REVERSAL banner (teal) / high-priority phone alert**
 
 The same live footprint firing while the stock is down 4%+ on the day or gapped down
 4%+ at the open - usually a post-earnings flush being bought. This is a bounce attempt
@@ -1612,7 +1681,7 @@ ones, which is why it gets its own label instead of the IGNITING banner.
 **Alert feed** logs each ticker once per day, the first time it crosses your score
 threshold or ignites. Phone pushes mirror the feed when ntfy is configured.
 
-**Chart**: candles are 1-minute bars for the current session; the orange line is VWAP -
+**Chart**: candles are 1-minute bars for the current session; the amber line is VWAP -
 price above it means buyers control the session. Volume bars underneath confirm whether
 a move has real participation.
 
@@ -1642,13 +1711,13 @@ with left:
             fig.add_trace(go.Candlestick(
                 x=m1.index, open=m1["Open"], high=m1["High"],
                 low=m1["Low"], close=m1["Close"], name=sel,
-                increasing_line_color="#22c55e", decreasing_line_color="#ef4444",
+                increasing_line_color="#3ddc84", decreasing_line_color="#e05555",
             ), row=1, col=1)
             fig.add_trace(go.Scatter(
                 x=m1.index, y=vw, name="VWAP",
                 line=dict(color="#f5a623", width=1.6),
             ), row=1, col=1)
-            colors = np.where(m1["Close"] >= m1["Open"], "#1f7a45", "#8a2b2b")
+            colors = np.where(m1["Close"] >= m1["Open"], "#1e5c38", "#6b2222")
             fig.add_trace(go.Bar(
                 x=m1.index, y=m1["Volume"], name="Volume", marker_color=colors,
             ), row=2, col=1)
