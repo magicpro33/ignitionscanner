@@ -40,8 +40,6 @@ import pandas as pd
 import requests
 import streamlit as st
 import yfinance as yf
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # ----------------------------------------------------------------------------
 # Page config and theme
@@ -330,6 +328,18 @@ PRESETS = {
         "SCCO,FCX,TECK,RIO,BHP,XME,COPX,TMC,FLKR,EWY,"
         "TX,NVA,GORO,UUUU,EU,LEU,NNE,CCJ,UROY,CRMX"
     ),
+}
+
+# ETFs excluded from All Presets scan — funds don't have ignition signals
+# (no insider buying, no earnings catalyst, no squeeze) and slow the scan.
+# Individual stocks only for All Presets mode.
+ALL_PRESETS_ETF_EXCLUDE = {
+    "ARKK","MAGS","SPY","IWM","XLF","XLI","XLU","XLY","XLE","XME",
+    "SOXX","SMH","IGV","BOTZ","DTCR","FTXR","XSD","XTN","COPX","SILJ",
+    "SLVR","PSLV","JEPI","QYLD","SPHD","SRET","DIV","KBWD","PGX",
+    "VTI","VOO","VUG","VEU","VT","VXUS","VTIAX","VTSAX","VTWAX","VFIAX",
+    "VIGAX","ITA","XAR","KDEF","SPCX","EWY","FLKR","IBIT","FCG",
+    "BWET","SEA","TCAI","AIPO","SMUP","UUUG","CRMX",
 }
 
 POSITIVE_WORDS = [
@@ -1344,17 +1354,18 @@ source = st.sidebar.radio(
 
 screener_mode = False
 if all_presets_mode:
-    # Build deduplicated mega-list across all 8 presets
+    # Build deduplicated mega-list across all 8 presets, excluding ETFs
     seen, all_combined = set(), []
     for tkrs in PRESETS.values():
         for t in [x.strip().upper() for x in tkrs.split(",") if x.strip()]:
-            if t not in seen:
+            if t not in seen and t not in ALL_PRESETS_ETF_EXCLUDE:
                 seen.add(t)
                 all_combined.append(t)
     tickers = all_combined
     st.sidebar.caption(
-        f"ALL PRESETS: {len(tickers)} unique tickers across "
-        f"{len(PRESETS)} sectors. Top N shown after scan."
+        f"ALL PRESETS: {len(tickers)} stocks across "
+        f"{len(PRESETS)} sectors (ETFs excluded). "
+        f"Top {top_n} shown after scan."
     )
 elif source == "Nightly Screener Top 10":
     screener_mode = True
@@ -1414,18 +1425,8 @@ alert_threshold = st.sidebar.slider(
          "its overall Score crosses this line each day. IGNITING alerts fire "
          "regardless of this threshold when all live conditions confirm at once.",
 )
-view_mode = st.sidebar.radio(
-    "Table style", ["Compact (phone)", "Full table"], index=0,
-    help="Compact: card rows sized for a phone screen - ticker, color-coded "
-         "score, slim bar, key numbers. Full table: the complete sortable "
-         "grid with column tooltips (better on desktop).",
-)
-show_all_cols = st.sidebar.toggle(
-    "Show all table columns", value=False,
-    help="Off: compact view (Ticker, Score, NightlyRank, Ignition, Fuel). "
-         "On: every underlying metric - RVOL, Surge, Velocity, VWAP, HOD, RSI, "
-         "short float, insider dollars, news count, and live signals.",
-)
+view_mode = "Compact (phone)"
+show_all_cols = False
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Notifications</div>", unsafe_allow_html=True)
 if ntfy_config():
@@ -1459,7 +1460,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.8 - on demand"
+APP_VERSION = "v3.0 - stock analyzer"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     f"# IGNITION <span style='font-size:16px;color:#4a6a8a;font-family:Space Mono'>"
@@ -1539,8 +1540,8 @@ else:
     ok = ok[:top_n]
     if all_presets_mode:
         st.caption(
-            f"All Presets mode: scanned {len(results)} unique tickers across "
-            f"{len(PRESETS)} sectors, showing top {top_n} by Score."
+            f"All Presets: scanned {len(results)} stocks across "
+            f"{len(PRESETS)} sectors (ETFs excluded), showing top {top_n} by Score."
         )
 
 # Register new alerts (only on a fresh scan, not when reusing cached results)
@@ -1927,113 +1928,448 @@ Ignition number is the combination this tool exists to catch.
 """)
 
 # ----------------------------------------------------------------------------
-# Detail chart + alert feed
 # ----------------------------------------------------------------------------
-left, right = st.columns([2, 1])
+# Stock Analyzer  (replaces chart + alert feed)
+# ----------------------------------------------------------------------------
+st.markdown(
+    "<div style='font-family:Rajdhani,sans-serif;font-size:22px;font-weight:700;"
+    "color:#e8f0fa;letter-spacing:.6px;margin:18px 0 4px'>Stock Analyzer</div>",
+    unsafe_allow_html=True,
+)
 
-with left:
-    st.markdown("### Chart")
-    if ok:
-        sel = st.selectbox("Ticker", [r["ticker"] for r in ok], index=0, label_visibility="collapsed")
-        m1, _ = fetch_intraday(sel)
-        if m1 is not None and len(m1) > 2:
-            vw = vwap(m1)
-            fig = make_subplots(
-                rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28],
-                vertical_spacing=0.03,
-            )
-            fig.add_trace(go.Candlestick(
-                x=m1.index, open=m1["Open"], high=m1["High"],
-                low=m1["Low"], close=m1["Close"], name=sel,
-                increasing_line_color="#3ddc84", decreasing_line_color="#e05555",
-            ), row=1, col=1)
-            fig.add_trace(go.Scatter(
-                x=m1.index, y=vw, name="VWAP",
-                line=dict(color="#f5a623", width=1.6),
-            ), row=1, col=1)
-            colors = np.where(m1["Close"] >= m1["Open"], "#1e5c38", "#6b2222")
-            fig.add_trace(go.Bar(
-                x=m1.index, y=m1["Volume"], name="Volume", marker_color=colors,
-            ), row=2, col=1)
-            fig.update_layout(
-                height=460, template="plotly_dark",
-                paper_bgcolor="#07111f", plot_bgcolor="#0d1e33",
-                margin=dict(l=10, r=10, t=10, b=10),
-                xaxis_rangeslider_visible=False, showlegend=False,
-                font=dict(family="Space Mono"),
-            )
-            st.plotly_chart(fig, use_container_width=True)
+if not ok:
+    st.info("Run a scan first — then select a stock to analyze.")
+else:
+    az_col1, az_col2 = st.columns([2, 3])
+    with az_col1:
+        az_ticker = st.selectbox(
+            "Select stock",
+            [r["ticker"] for r in ok],
+            index=0,
+            help="Choose any stock from the current scan results to drill into full analysis.",
+            label_visibility="collapsed",
+        )
 
-            rsel = next((r for r in ok if r["ticker"] == sel), None)
-            if rsel:
-                f = rsel["fuel"]
-                ticker_sel = rsel["ticker"]
-                plain_tags = []
-                if f.get("short_pct_float"):
-                    plain_tags.append(f"short float {f['short_pct_float']*100:.1f}%")
-                if f.get("float_shares"):
-                    plain_tags.append(f"float {f['float_shares']/1e6:.0f}M")
-                if f.get("insider_buys"):
-                    plain_tags.append(f"{f['insider_buys']} insider buys 90d")
-                if f.get("news_count_48h"):
-                    plain_tags.append(f"{f['news_count_48h']} headlines 48h")
-                if f.get("inst_pct"):
-                    plain_tags.append(f"inst {f['inst_pct']}%")
-                plain_html = " ".join(
-                    f"<span class='fuel-tag'>{t}</span>" for t in plain_tags
-                )
-                # DTC gauge rendered separately (visual pill)
-                dtc_val = f.get("days_to_cover")
-                dtc_html = dtc_gauge_pill(ticker_sel, dtc_val) if dtc_val and dtc_val >= 5 else ""
-                cat_html = build_catalyst_tags_html(
-                    ticker_sel,
-                    f.get("catalyst_tags") or [],
-                    f.get("bimodal_event", False),
-                    None,  # DTC rendered separately above
-                    f.get("earnings_days"),
-                )
-                combined = plain_html + ("&nbsp;" if plain_html and (dtc_html or cat_html) else "") + dtc_html + cat_html
-                if combined:
-                    st.markdown(combined, unsafe_allow_html=True)
-                # Show suppressed catalysts transparently
-                suppressed = f.get("catalyst_suppressed") or []
-                if suppressed:
-                    sup_html = " ".join(
-                        f"<span style='font-family:Space Mono,monospace;font-size:10px;"
-                        f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
-                        f"padding:1px 6px;margin-right:4px;text-decoration:line-through'>"
-                        f"{s.upper()}</span>"
-                        for s in suppressed
-                    )
-                    sector_str = f.get("sector", "unknown sector")
-                    st.markdown(
-                        f"<div style='margin-top:4px;font-family:Space Mono,monospace;"
-                        f"font-size:10px;color:#4a6a8a'>filtered (sector: {sector_str}): "
-                        f"{sup_html}</div>",
-                        unsafe_allow_html=True,
-                    )
-                if f.get("latest_headline"):
-                    st.caption(f"Latest: {f['latest_headline']}")
+    # ── helper renderers ────────────────────────────────────────────
+    def az_pill(label, good):
+        if good is True:
+            bg, col, bc = "#0d2215", "#4dd880", "#1e6b35"
+        elif good is False:
+            bg, col, bc = "#220d0d", "#e07070", "#a03535"
+        else:
+            bg, col, bc = "#1a1500", "#d0b040", "#907020"
+        return (
+            f"<span style='display:inline-block;background:{bg};color:{col};"
+            f"border:1px solid {bc};border-radius:4px;font-family:Space Mono,monospace;"
+            f"font-size:11px;font-weight:500;padding:2px 9px;margin:2px 4px 2px 0'>"
+            f"{label}</span>"
+        )
 
-with right:
-    st.markdown("### Alert feed")
-    if st.button("Clear alerts"):
-        st.session_state.alerts = []
-        st.session_state.alerted = set()
-    if st.session_state.alerts:
-        for a in st.session_state.alerts[:25]:
-            kind = a.get("kind", "alert")
-            flag = {"igniting": "IGNITING", "reversal": "GAP REV"}.get(kind, "ALERT")
-            border = "#29b6c8" if kind == "reversal" else "#f5a623"
-            price = f"${a['price']:.2f}" if a.get("price") else ""
+    def az_tag(v, hi, lo, fmt="{:.2f}", suffix=""):
+        try:
+            fv = float(v)
+            col = "#4dd880" if fv >= hi else ("#d0b040" if fv >= lo else "#e07070")
+            return f"<span style='font-family:Space Mono,monospace;color:{col}'>{fmt.format(fv)}{suffix}</span>"
+        except Exception:
+            return "--"
+
+    def mrow(label, tooltip, value):
+        return (
+            f"<tr style='border-bottom:1px solid #122540'>"
+            f"<td style='padding:8px 10px;font-size:13px;color:#8baac8;width:40%'>"
+            f"<span title='{tooltip}' style='cursor:help;border-bottom:1px dashed #1e3a5f'>{label}</span></td>"
+            f"<td style='padding:8px 10px;font-size:13px;font-family:Space Mono,monospace;color:#e8f0fa'>{value}</td>"
+            f"</tr>"
+        )
+
+    def az_section(title):
+        st.markdown(
+            f"<div style='font-family:Rajdhani,sans-serif;font-weight:700;font-size:13px;"
+            f"letter-spacing:1px;text-transform:uppercase;color:#f5a623;"
+            f"border-bottom:1px solid #1e3a5f;padding-bottom:4px;margin:14px 0 8px'>"
+            f"{title}</div>",
+            unsafe_allow_html=True,
+        )
+
+    def pct_color(v):
+        if v is None: return "--"
+        col = "#4dd880" if v >= 0 else "#e07070"
+        sign = "+" if v >= 0 else ""
+        return f"<span style='font-family:Space Mono,monospace;color:{col}'>{sign}{v:.2f}%</span>"
+
+    # ── Fetch data ───────────────────────────────────────────────────
+    @st.cache_data(ttl=900, show_spinner="Loading analysis…")
+    def fetch_analyzer(ticker):
+        tk = yf.Ticker(ticker)
+        info = {}
+        try: info = tk.info or {}
+        except Exception: pass
+        hist = pd.DataFrame()
+        try:
+            h = tk.history(period="1y", interval="1d")
+            if h is not None and not h.empty:
+                if isinstance(h.columns, pd.MultiIndex):
+                    h.columns = h.columns.get_level_values(0)
+                hist = h
+        except Exception: pass
+        return info, hist
+
+    info, hist = fetch_analyzer(az_ticker)
+
+    # ── Parse core fields ────────────────────────────────────────────
+    px    = float(info.get("currentPrice") or info.get("regularMarketPrice") or
+                  info.get("previousClose") or 0)
+    name  = info.get("shortName") or info.get("longName") or az_ticker
+    sec   = info.get("sector") or "Unknown"
+    ind   = info.get("industry") or "Unknown"
+    mcap  = info.get("marketCap") or 0
+    pe    = info.get("trailingPE")
+    fwpe  = info.get("forwardPE")
+    pb    = info.get("priceToBook")
+    ps    = info.get("priceToSalesTrailing12Months")
+    beta  = info.get("beta")
+    hi52  = info.get("fiftyTwoWeekHigh") or 0
+    lo52  = info.get("fiftyTwoWeekLow") or 0
+    spf   = info.get("shortPercentOfFloat")
+    sratio= info.get("shortRatio")
+    am    = info.get("targetMeanPrice")
+    al    = info.get("targetLowPrice")
+    ahigh = info.get("targetHighPrice")
+    nana  = info.get("numberOfAnalystOpinions") or 0
+    recky = info.get("recommendationKey") or ""
+    rg    = info.get("revenueGrowth")
+    eg    = info.get("earningsGrowth")
+    pm    = info.get("profitMargins")
+    om    = info.get("operatingMargins")
+    roe   = info.get("returnOnEquity")
+    roa   = info.get("returnOnAssets")
+    deq   = info.get("debtToEquity")
+    cr    = info.get("currentRatio")
+    fl    = info.get("floatShares")
+    aus   = ((am - px) / px * 100) if (am and px > 0) else None
+    rng52 = ((px - lo52) / (hi52 - lo52) * 100) if (hi52 and lo52 and hi52 != lo52) else None
+
+    # ── Technicals from history ──────────────────────────────────────
+    rsi_v = ma50_v = ma200_v = macd_v = macd_s = vol_avg = vol_td = None
+    pct1d = pct5d = pct1m = pct3m = atr = None
+    bb_upper = bb_mid = bb_lower = None
+
+    if not hist.empty and len(hist) >= 26:
+        cl = hist["Close"].dropna()
+        vl = hist["Volume"].dropna()
+        try:
+            dlt = cl.diff(); g = dlt.clip(lower=0).rolling(14).mean()
+            ls = (-dlt.clip(upper=0)).rolling(14).mean()
+            rs3 = (100 - (100 / (1 + g / ls.replace(0, np.nan)))).dropna()
+            rsi_v = float(rs3.iloc[-1]) if not rs3.empty else None
+        except Exception: pass
+        try:
+            e12 = cl.ewm(span=12, adjust=False).mean()
+            e26 = cl.ewm(span=26, adjust=False).mean()
+            ml = e12 - e26; sl = ml.ewm(span=9, adjust=False).mean()
+            macd_v = float(ml.iloc[-1]); macd_s = float(sl.iloc[-1])
+        except Exception: pass
+        try:
+            if len(cl) >= 50:  ma50_v  = float(cl.rolling(50).mean().iloc[-1])
+            if len(cl) >= 200: ma200_v = float(cl.rolling(200).mean().iloc[-1])
+        except Exception: pass
+        try:
+            if len(vl) >= 20: vol_avg = float(vl.iloc[-20:].mean()); vol_td = float(vl.iloc[-1])
+        except Exception: pass
+        try:
+            if len(cl) >= 2:  pct1d = (float(cl.iloc[-1]) - float(cl.iloc[-2])) / float(cl.iloc[-2]) * 100
+            if len(cl) >= 6:  pct5d = (float(cl.iloc[-1]) - float(cl.iloc[-6])) / float(cl.iloc[-6]) * 100
+            if len(cl) >= 22: pct1m = (float(cl.iloc[-1]) - float(cl.iloc[-22])) / float(cl.iloc[-22]) * 100
+            if len(cl) >= 66: pct3m = (float(cl.iloc[-1]) - float(cl.iloc[-66])) / float(cl.iloc[-66]) * 100
+        except Exception: pass
+        try:
+            # ATR (14-day Average True Range)
+            hi = hist["High"].dropna(); lo = hist["Low"].dropna()
+            tr = pd.concat([hi - lo,
+                            (hi - cl.shift()).abs(),
+                            (lo - cl.shift()).abs()], axis=1).max(axis=1)
+            atr = float(tr.rolling(14).mean().iloc[-1])
+        except Exception: pass
+        try:
+            # Bollinger Bands (20-day, 2 std)
+            if len(cl) >= 20:
+                bm = cl.rolling(20).mean()
+                bstd = cl.rolling(20).std()
+                bb_mid = float(bm.iloc[-1])
+                bb_upper = float((bm + 2 * bstd).iloc[-1])
+                bb_lower = float((bm - 2 * bstd).iloc[-1])
+        except Exception: pass
+
+    # ── Scan result for this ticker ──────────────────────────────────
+    scan_r = next((r for r in ok if r["ticker"] == az_ticker), None)
+    ign_sc = scan_r["ignition_score"] if scan_r else None
+    fuel_sc = scan_r["fuel_score"] if scan_r else None
+    rvol = scan_r["rvol"] if scan_r else None
+    reasons = scan_r.get("reasons", []) if scan_r else []
+
+    # ── Signal pills ─────────────────────────────────────────────────
+    pills_html = ""
+    if rsi_v is not None:
+        if rsi_v < 30:   pills_html += az_pill("RSI Oversold", True)
+        elif rsi_v > 70: pills_html += az_pill("RSI Overbought", False)
+        elif 45 < rsi_v < 65: pills_html += az_pill("RSI Sweet Spot", True)
+        else:            pills_html += az_pill("RSI Neutral", None)
+    if macd_v is not None and macd_s is not None:
+        pills_html += az_pill("MACD Bullish" if macd_v > macd_s else "MACD Bearish", macd_v > macd_s)
+    if ma50_v and ma200_v:
+        pills_html += az_pill("Golden Cross" if ma50_v > ma200_v else "Death Cross", ma50_v > ma200_v)
+    if vol_avg and vol_td:
+        if vol_td > vol_avg * 1.5: pills_html += az_pill("High Volume", True)
+        elif vol_td < vol_avg * 0.5: pills_html += az_pill("Low Volume", None)
+    if spf and spf > 0.15: pills_html += az_pill("High Short Interest", None)
+    if aus and aus > 15: pills_html += az_pill(f"Analyst Upside {aus:.0f}%", True)
+    if scan_r and scan_r.get("igniting"): pills_html += az_pill("IGNITING NOW", True)
+    if scan_r and scan_r.get("gap_reversal"): pills_html += az_pill("GAP REVERSAL", False)
+    if scan_r and scan_r.get("new_hod"): pills_html += az_pill("New HOD", True)
+
+    # ── Header metrics ───────────────────────────────────────────────
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Price", f"${px:.2f}" if px else "--")
+    m2.metric("Ignition", f"{ign_sc:.0f}" if ign_sc is not None else "--")
+    m3.metric("Fuel", f"{fuel_sc:.0f}" if fuel_sc is not None else "--")
+    m4.metric("RVOL", f"{rvol:.1f}x" if rvol else "--")
+    m5.metric("52W Pos", f"{rng52:.0f}%" if rng52 is not None else "--")
+    m6.metric("Target", f"${am:.2f}" if am else "--", delta=f"{aus:.1f}%" if aus else None)
+
+    st.markdown(
+        f"<div style='margin:6px 0 4px;font-family:Plus Jakarta Sans,sans-serif'>"
+        f"<strong style='color:#e8f0fa'>{name}</strong>"
+        f"  <span style='color:#4a6a8a;font-size:13px'>{sec} / {ind}</span></div>",
+        unsafe_allow_html=True,
+    )
+    if pills_html:
+        st.markdown(f"<div style='margin:6px 0 14px'>{pills_html}</div>", unsafe_allow_html=True)
+    st.markdown("<hr style='border-color:#1e3a5f;margin:12px 0'>", unsafe_allow_html=True)
+
+    # ── Three column layout ──────────────────────────────────────────
+    colA, colB, colC = st.columns(3)
+
+    # ── COLUMN A: Price Range Analysis ──────────────────────────────
+    with colA:
+        az_section("Price Range Analysis")
+
+        # 52-week channel visual
+        if hi52 and lo52 and px:
+            pct_pos = max(0.0, min(1.0, (px - lo52) / (hi52 - lo52))) if hi52 != lo52 else 0.5
+            bar_pct = int(pct_pos * 100)
+            # Color: near low=red, mid=amber, near high=green
+            bar_col = "#4dd880" if pct_pos > 0.7 else ("#d0b040" if pct_pos > 0.35 else "#e07070")
             st.markdown(
-                f"<div class='alert-row' style='border-left-color:{border}'>"
-                f"{a['time']} &nbsp;<b>{a['ticker']}</b> {price} "
-                f"&nbsp;[{flag} {a['score']}]<br>{a['why']}</div>",
+                f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
+                f"padding:14px 16px;margin-bottom:12px'>"
+                f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;"
+                f"font-size:11px;color:#4a6a8a;margin-bottom:6px'>"
+                f"<span>52W Low ${lo52:.2f}</span><span>52W High ${hi52:.2f}</span></div>"
+                f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
+                f"<div style='background:{bar_col};width:{bar_pct}%;height:100%;border-radius:4px'></div>"
+                f"<div style='position:absolute;top:-18px;left:calc({bar_pct}% - 1px);"
+                f"font-family:Space Mono,monospace;font-size:10px;color:{bar_col}'>"
+                f"${px:.2f}</div></div>"
+                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#8baac8'>"
+                f"Position: <strong style='color:{bar_col}'>{rng52:.1f}% of 52W range</strong></div>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
-    else:
-        st.caption("No alerts yet this session. Alerts fire when a ticker crosses the score threshold or all ignition conditions confirm at once.")
+
+        # Bollinger Bands channel
+        if bb_upper and bb_lower and bb_mid and px:
+            bw = bb_upper - bb_lower
+            bpos = max(0.0, min(1.0, (px - bb_lower) / bw)) if bw > 0 else 0.5
+            bpct = int(bpos * 100)
+            bcol = "#e07070" if bpos > 0.85 else ("#4dd880" if bpos < 0.15 else "#8baac8")
+            bb_label = "Near upper band (overbought)" if bpos > 0.85 else ("Near lower band (oversold)" if bpos < 0.15 else "Inside bands (neutral)")
+            st.markdown(
+                f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;"
+                f"padding:14px 16px;margin-bottom:12px'>"
+                f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;"
+                f"font-size:11px;color:#4a6a8a;margin-bottom:6px'>"
+                f"<span>BB Lower ${bb_lower:.2f}</span><span>BB Upper ${bb_upper:.2f}</span></div>"
+                f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
+                f"<div style='position:absolute;left:50%;width:1px;height:100%;background:#1e3a5f'></div>"
+                f"<div style='background:{bcol};width:{bpct}%;height:100%;border-radius:4px'></div>"
+                f"<div style='position:absolute;top:-18px;left:calc({bpct}% - 1px);"
+                f"font-family:Space Mono,monospace;font-size:10px;color:{bcol}'>${px:.2f}</div></div>"
+                f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#8baac8'>"
+                f"Bollinger: <strong style='color:{bcol}'>{bb_label}</strong></div>"
+                f"<div style='margin-top:4px;font-family:Space Mono,monospace;font-size:11px;color:#4a6a8a'>"
+                f"Mid (20MA): ${bb_mid:.2f} · Width: ${bw:.2f}</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ATR + key levels table
+        az_section("Key Levels")
+        lvl_rows = []
+        if ma50_v:
+            pvs = (px - ma50_v) / ma50_v * 100
+            ci = "Just above — support zone" if 0 < pvs < 5 else ("Extended — overbought" if pvs > 5 else ("Just below — watch reclaim" if pvs > -5 else "Well below — downtrend"))
+            lvl_rows.append(mrow("50-Day MA", "50-Day Moving Average — the short-term trend anchor. Price above = bullish. Just above = ideal entry.", f"${ma50_v:.2f} <span style='color:{'#4dd880' if pvs >= 0 else '#e07070'};font-size:11px'>({'+' if pvs >= 0 else ''}{pvs:.1f}%)</span>"))
+        if ma200_v:
+            mc = "Golden Cross ↑" if (ma50_v and ma50_v > ma200_v) else "Death Cross ↓"
+            cc = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#e07070"
+            lvl_rows.append(mrow("200-Day MA", "200-Day Moving Average — the long-term trend line. Golden Cross = 50MA above 200MA, major buy signal.", f"${ma200_v:.2f} <span style='color:{cc};font-size:11px'>{mc}</span>"))
+        if atr:
+            lvl_rows.append(mrow("ATR (14d)", "Average True Range — daily volatility in dollars. Useful for setting stop-loss levels. Place stops 1–1.5x ATR below your entry.", f"${atr:.2f} <span style='color:#4a6a8a;font-size:11px'>({atr/px*100:.1f}% of price)</span>"))
+        if hi52:
+            dist = (hi52 - px) / px * 100
+            lvl_rows.append(mrow("52W High", "Distance to 52-week high. Within 5% = near resistance breakout zone. Above 52W high = new territory, momentum regime.", f"${hi52:.2f} <span style='color:#4a6a8a;font-size:11px'>({dist:.1f}% away)</span>"))
+        if lo52:
+            dist_lo = (px - lo52) / px * 100
+            lvl_rows.append(mrow("52W Low", "Distance from 52-week low — how far off the floor the stock is trading.", f"${lo52:.2f} <span style='color:#4a6a8a;font-size:11px'>(+{dist_lo:.1f}% above)</span>"))
+        if lvl_rows:
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(lvl_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        az_section("Price Performance")
+        perf_rows = [
+            mrow("1 Day", "Daily price change vs yesterday's close.", pct_color(pct1d)),
+            mrow("5 Day", "Five trading days — roughly one calendar week.", pct_color(pct5d)),
+            mrow("1 Month", "~22 trading days. Shows the near-term trend.", pct_color(pct1m)),
+            mrow("3 Month", "~66 trading days (one quarter). Used by institutions.", pct_color(pct3m)),
+        ]
+        st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(perf_rows)}</tbody></table>", unsafe_allow_html=True)
+
+    # ── COLUMN B: Technical Signals + Short/Growth ───────────────────
+    with colB:
+        az_section("Technical Signals")
+        tech_rows = []
+        if rsi_v is not None:
+            if rsi_v < 30:    ri, rc = "Oversold — potential bounce", "#4dd880"
+            elif rsi_v < 45:  ri, rc = "Weak — losing momentum", "#e07070"
+            elif rsi_v < 55:  ri, rc = "Neutral — no clear direction", "#8baac8"
+            elif rsi_v < 70:  ri, rc = "Strong — uptrend confirmed", "#4dd880"
+            else:             ri, rc = "Overbought — pullback possible", "#e07070"
+            tech_rows.append(mrow("RSI (14d)", "Relative Strength Index 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = momentum sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#4a6a8a'>{ri}</span>"))
+        if macd_v is not None:
+            mi = "Bullish — momentum building" if macd_v > macd_s else "Bearish — momentum fading"
+            mc2 = "#4dd880" if macd_v > macd_s else "#e07070"
+            tech_rows.append(mrow("MACD", "Moving Average Convergence Divergence. MACD above signal line = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#4a6a8a'>{mi}</span>"))
+        if ma50_v and px:
+            pvs = (px - ma50_v) / ma50_v * 100
+            m5i = "Extended — may be overbought" if pvs > 5 else ("Just above — ideal zone" if pvs > 0 else ("Just below — watch reclaim" if pvs > -5 else "Well below — downtrend"))
+            m5c = "#4dd880" if 0 < pvs < 5 else ("#d0b040" if pvs > 5 else ("#d0b040" if pvs > -5 else "#e07070"))
+            tech_rows.append(mrow("50-Day MA", "50-Day Moving Average. Price just above = support. Just below = watch for reclaim.", f"${ma50_v:.2f} <span style='color:{m5c};font-size:11px'>({'+' if pvs >= 0 else ''}{pvs:.1f}%)</span>"))
+        if ma200_v:
+            m2i = "Golden Cross — long-term uptrend" if (ma50_v and ma50_v > ma200_v) else "Death Cross — long-term downtrend"
+            m2c = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#e07070"
+            tech_rows.append(mrow("200-Day MA", "200-Day Moving Average. Golden Cross (50MA above 200MA) = major bull signal.", f"${ma200_v:.2f} <span style='font-size:11px;color:{m2c}'>{m2i}</span>"))
+        if vol_avg and vol_td:
+            vr = vol_td / vol_avg
+            vi = "Very high" if vr > 2 else ("High" if vr > 1.5 else ("Normal" if vr > 0.5 else "Low"))
+            vc = "#4dd880" if vr > 1.5 else ("#8baac8" if vr > 0.5 else "#d0b040")
+            tech_rows.append(mrow("Volume", "Today's volume vs 20-day average. High volume confirms moves.", f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#4a6a8a'>{vi}</span>"))
+        if ign_sc is not None:
+            ic = "#f5a623" if ign_sc >= 70 else ("#c47d0e" if ign_sc >= 50 else "#4a6a8a")
+            tech_rows.append(mrow("Ignition Score", "Live momentum score from RVOL, volume surge, velocity, VWAP, HOD, RSI, MACD (0-100).", f"<span style='color:{ic};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{ign_sc:.0f}</span>"))
+        if tech_rows:
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(tech_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        az_section("Short Interest & Growth")
+        si_rows = []
+        if spf:
+            si_rows.append(mrow("Short % Float", "% of float sold short. Above 15% = heavy bets against. Above 20% = squeeze setup.", az_tag(spf * 100, 20, 10, "{:.1f}", "%")))
+        if sratio:
+            si_rows.append(mrow("Days to Cover", "Short interest / avg volume. How many days for shorts to exit. High = squeeze fuel.", az_tag(sratio, 5, 3, "{:.1f}", "d")))
+        if rg:
+            si_rows.append(mrow("Revenue Growth", "YoY revenue growth. Foundation of long-term stock appreciation.", az_tag(rg * 100, 10, 3, "{:.1f}", "%")))
+        if eg:
+            si_rows.append(mrow("Earnings Growth", "YoY EPS growth. Earnings growing faster than revenue = increasing efficiency.", az_tag(eg * 100, 10, 3, "{:.1f}", "%")))
+        if fuel_sc is not None:
+            fc = "#4dd880" if fuel_sc >= 70 else ("#d0b040" if fuel_sc >= 50 else "#4a6a8a")
+            si_rows.append(mrow("Fuel Score", "Primed-to-move score: short float, insider buying, news, float size, 52W position (0-100).", f"<span style='color:{fc};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{fuel_sc:.0f}</span>"))
+        if si_rows:
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(si_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        az_section("Live Signals")
+        if reasons:
+            sig_html = "".join(
+                f"<span style='display:inline-block;background:#0d1e33;color:#f5a623;"
+                f"border:1px solid #1e3a5f;border-radius:4px;font-family:Space Mono,monospace;"
+                f"font-size:11px;padding:2px 8px;margin:2px 3px 2px 0'>{r}</span>"
+                for r in reasons
+            )
+            st.markdown(sig_html, unsafe_allow_html=True)
+        else:
+            st.caption("No active signals this scan.")
+
+    # ── COLUMN C: Valuation + Financial Health + Analyst ────────────
+    with colC:
+        az_section("Valuation")
+        val_rows = []
+        if mcap:
+            mc_str = f"${mcap/1e9:.2f}B" if mcap >= 1e9 else f"${mcap/1e6:.1f}M"
+            val_rows.append(mrow("Market Cap", "Total market value = share price × shares outstanding. Determines if this is micro/small/mid/large cap.", mc_str))
+        if pe:
+            val_rows.append(mrow("P/E Ratio", "Price-to-Earnings. How much investors pay per dollar of earnings. High P/E = growth expectations. Low P/E = value or declining business.", az_tag(pe, 0, 25, "{:.1f}", "x") if pe < 100 else f"<span style='font-family:Space Mono,monospace;color:#d0b040'>{pe:.1f}x</span>"))
+        if fwpe:
+            val_rows.append(mrow("Forward P/E", "P/E based on next 12 months estimated earnings. Lower than trailing P/E = analysts expect earnings growth.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{fwpe:.1f}x</span>" if fwpe else "--"))
+        if pb:
+            val_rows.append(mrow("P/B Ratio", "Price-to-Book. Below 1.0 = trading below asset value. Above 3.0 = premium for brand/growth.", az_tag(pb, 0, 3, "{:.2f}", "x")))
+        if ps:
+            val_rows.append(mrow("P/S Ratio", "Price-to-Sales. Useful for pre-profit companies. Below 2x = reasonable. Above 10x = high growth premium.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{ps:.2f}x</span>"))
+        if beta:
+            val_rows.append(mrow("Beta", "Volatility vs S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. Under 0.6 = defensive.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{beta:.2f}</span>"))
+        if fl:
+            fl_str = f"{fl/1e9:.2f}B" if fl >= 1e9 else f"{fl/1e6:.0f}M"
+            val_rows.append(mrow("Float", "Tradeable shares outstanding. Smaller float = more explosive moves on volume.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{fl_str}</span>"))
+        if val_rows:
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        az_section("Financial Health")
+        hlth_rows = []
+        if pm:
+            hlth_rows.append(mrow("Profit Margin", "Net income / revenue. How many cents profit per dollar of sales. Expanding = pricing power.", az_tag(pm * 100, 15, 5, "{:.1f}", "%")))
+        if om:
+            hlth_rows.append(mrow("Operating Margin", "EBIT / revenue. Core business efficiency before interest and taxes.", az_tag(om * 100, 15, 5, "{:.1f}", "%")))
+        if roe:
+            hlth_rows.append(mrow("Return on Equity", "Net income / shareholders equity. Above 15% = strong. Buffett's key metric.", az_tag(roe * 100, 15, 8, "{:.1f}", "%")))
+        if roa:
+            hlth_rows.append(mrow("Return on Assets", "Net income / total assets. Not inflated by debt. Above 5% = solid.", az_tag(roa * 100, 8, 3, "{:.1f}", "%")))
+        if deq:
+            hlth_rows.append(mrow("D/E Ratio", "Total debt / equity. High D/E amplifies gains and losses. Capital-intensive sectors carry more.", f"<span style='font-family:Space Mono,monospace;color:#8baac8'>{deq:.1f}%</span>"))
+        if cr:
+            hlth_rows.append(mrow("Current Ratio", "Current assets / current liabilities. Above 1.5 = comfortable. Below 1.0 = short-term risk.", az_tag(cr, 1.5, 1.0, "{:.2f}")))
+        if hlth_rows:
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(hlth_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        if am:
+            az_section("Analyst Consensus")
+            rcol = "#4dd880" if "buy" in recky.lower() else ("#e07070" if "sell" in recky.lower() else "#d0b040")
+            rdisp = recky.replace("_", " ").title() if recky else "--"
+            an_rows = [
+                mrow("Recommendation", "Wall Street consensus: Strong Buy / Buy / Hold / Sell. Aggregates all analyst ratings.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#4a6a8a'>({nana} analysts)</span>"),
+                mrow("Mean Target", "Average 12-month analyst price target. Implies expected upside/downside from current price.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#e07070'}'>({'+' if aus and aus >= 0 else ''}{aus:.1f}%)</span>" if aus else "")),
+                mrow("Target Range", "Low-to-high analyst target spread. Wide range = high uncertainty. Narrow = strong consensus.", f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
+            ]
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(an_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        # Catalyst tags from scan
+        f_data = scan_r["fuel"] if scan_r else {}
+        cat_tags = f_data.get("catalyst_tags") or []
+        bimodal = f_data.get("bimodal_event", False)
+        dtc_val = f_data.get("days_to_cover")
+        ed = f_data.get("earnings_days")
+        if cat_tags or bimodal or (dtc_val and dtc_val >= 5):
+            az_section("Catalysts Detected")
+            cat_html = build_catalyst_tags_html(az_ticker, cat_tags, bimodal, dtc_val, ed)
+            suppressed = f_data.get("catalyst_suppressed") or []
+            if suppressed:
+                for s in suppressed:
+                    cat_html += (
+                        f"<span style='font-family:Space Mono,monospace;font-size:10px;"
+                        f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
+                        f"padding:1px 6px;margin:2px 3px 2px 0;text-decoration:line-through;"
+                        f"display:inline-block'>{s.upper()}</span>"
+                    )
+            if f_data.get("latest_headline"):
+                cat_html += f"<div style='margin-top:8px;font-size:11px;color:#4a6a8a'>{f_data['latest_headline']}</div>"
+            st.markdown(cat_html, unsafe_allow_html=True)
+
+
 
 # Close the Scanner tab context entered above
 tab_scan.__exit__(None, None, None)
