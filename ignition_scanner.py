@@ -28,6 +28,7 @@ Data: Yahoo Finance via yfinance (free, ~15 min delayed on some feeds).
 """
 
 import time
+import random
 import math
 import re
 import gzip
@@ -1353,8 +1354,6 @@ def compute_signals(ticker: str) -> dict:
 # ----------------------------------------------------------------------------
 # Sidebar controls
 # ----------------------------------------------------------------------------
-st.sidebar.markdown("## IGNITION")
-
 preset = None
 screener_mode = False
 st.sidebar.markdown(
@@ -1434,17 +1433,28 @@ elif source == "Nightly Screener Top 10":
     except Exception as e:
         st.sidebar.error(f"Could not load nightly dump: {e}")
 else:
+    preset_names = ["Custom"] + list(PRESETS.keys())
+    # Pick a random sector on very first load (not on every rerun)
+    if "initial_preset_idx" not in st.session_state:
+        st.session_state["initial_preset_idx"] = random.randint(1, len(preset_names) - 1)
     preset = st.sidebar.selectbox(
         "Sector preset",
-        ["Custom"] + list(PRESETS.keys()),
-        index=1,
+        preset_names,
+        index=st.session_state["initial_preset_idx"],
         help="Select a sector to scan, or choose Custom to enter your own tickers.",
+        key="sector_preset",
     )
-    default_tickers = PRESETS.get(preset, "CCJ,SMR,NNE,OKLO,LEU,EU,UUUU,UROY,GEV,CEG")
-    tickers_raw = st.sidebar.text_area(
-        "Tickers (comma separated)", value=default_tickers, height=90
-    )
-    tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:250]
+    # Update stored index so switching presets doesn't snap back on rerun
+    st.session_state["initial_preset_idx"] = preset_names.index(preset)
+    if preset == "Custom":
+        tickers_raw = st.sidebar.text_area(
+            "Tickers (comma separated)",
+            value="CCJ,SMR,NNE,OKLO,LEU,EU,UUUU,UROY,GEV,CEG",
+            height=90,
+        )
+        tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:250]
+    else:
+        tickers = [t.strip().upper() for t in PRESETS[preset].split(",") if t.strip()]
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
@@ -1505,11 +1515,20 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.1 - optimized"
+APP_VERSION = "v3.2 - icon header"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
-    f"# IGNITION <span style='font-size:16px;color:#7a9ab8;font-family:Space Mono'>"
-    f"last scan {last_scan} &nbsp;|&nbsp; {APP_VERSION}</span>",
+    "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
+    "<svg width='44' height='44' viewBox='0 0 72 72' fill='none' "
+    "xmlns='http://www.w3.org/2000/svg'>"
+    "<polyline points='8,36 18,36 24,16 30,56 38,26 44,46 50,36 64,36' "
+    "stroke='#f5a623' stroke-width='4' stroke-linecap='round' "
+    "stroke-linejoin='round' fill='none'/>"
+    "<circle cx='36' cy='36' r='4' fill='#f5a623'/>"
+    "</svg>"
+    f"<span style='font-family:Space Mono,monospace;font-size:14px;color:#7a9ab8'>"
+    f"last scan {last_scan} &nbsp;|&nbsp; {APP_VERSION}</span>"
+    "</div>",
     unsafe_allow_html=True,
 )
 
