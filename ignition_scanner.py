@@ -289,12 +289,47 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # Universe presets
 # ----------------------------------------------------------------------------
 PRESETS = {
-    "Nuclear / Uranium / SMR": "SMR,OKLO,NNE,CCJ,UEC,UUUU,EU,URG,LEU,DNN,NXE,BWXT,VST,CEG,TLN",
-    "Quantum Computing": "IONQ,QBTS,RGTI,QUBT,ARQQ,LAES",
-    "Energy / LNG / Midstream": "LNG,ET,EPD,WMB,KMI,TRGP,AR,EQT,FLNG",
-    "AI / Semis": "NVDA,AMD,AVGO,MU,SMCI,VRT,ARM,TSM,MRVL,CRDO",
-    "High Short Interest Movers": "GME,AMC,BYND,CVNA,UPST,SOUN,LUNR,ACHR,RKLB",
-    "Mega-cap Liquid": "AAPL,MSFT,GOOGL,AMZN,META,TSLA,NVDA",
+    "Precious Metals / Mining": (
+        "HL,AG,FSM,EXK,CDE,FCX,HBM,TECK,RIO,BHP,"
+        "SCCO,ALB,GLDG,LAC,TMQ,NISTF,CGAU,CRML,AA,"
+        "CENX,XME,COPX,SLVR,SILJ,PSLV,GORO,NVA,USAR,CMP,MP"
+    ),
+    "Energy / Oil / Gas / Uranium": (
+        "CCJ,UROY,EU,LEU,NNE,SMR,OKLO,TXNM,GEV,CEG,"
+        "NEE,XE,LNG,XOM,CVX,OXY,EQT,DVN,VLO,SHEL,"
+        "BP,DTM,CNQ,AROC,FCG,XLE,XLU,UUUU,UUUG,SMUP"
+    ),
+    "Defense / Aerospace / Space": (
+        "NOC,LMT,RTX,AVAV,ASTS,RKLB,RDW,LASR,SKYT,"
+        "MOGA,PKE,LPTH,XAR,ITA,KDEF,ATRO,MRCY,VSAT,"
+        "SPCX,BBAI,AIPO,PLTR,SYM,TER,EWY"
+    ),
+    "Semiconductors / Technology": (
+        "AMD,MU,TSM,TSEM,INTC,SWKS,QRVO,SNXX,"
+        "TTMI,VICR,SMH,SOXX,XSD,IGV,AMZN,MSFT,"
+        "GOOGL,GOOG,NOW,ORCL,DT,TENB,CVLT,EXFY,"
+        "INFQ,BOTZ,MAGS,ARKK,FTXR,TCAI"
+    ),
+    "Quantum / AI / Biotech": (
+        "IONQ,QBTS,RGTI,QMCO,BBAI,CMPS,BMEA,ADPT,"
+        "TXG,CTKB,BETA,MARA,IBIT,DTCR,ASTS,RDW,"
+        "LPTH,SKYT,LASR,SMR,NNE,OKLO,XE,STNG,SEA"
+    ),
+    "Industrials / Infrastructure": (
+        "PWR,MTZ,AGX,POWL,STRL,MWA,MLI,TEX,HLIO,NPO,"
+        "GTES,KAI,FELE,CSW,AIT,SXI,MIDD,TRS,SNX,TX,"
+        "VICR,XTN,XLI,NEWT,KFRC,OXM,EPC,DBI,GIS,KMB"
+    ),
+    "Income / Dividends / ETFs": (
+        "JEPI,QYLD,SPHD,SRET,DIV,KBWD,PGX,GLAD,AGD,"
+        "OTF,FSK,ITUB,OCCI,LTC,SPY,IWM,XLF,XLY,VEU,"
+        "VT,VTI,VOO,VUG,VXUS,MAGS,ARKK,BWET,STNG,DTCR,FCG"
+    ),
+    "Critical Minerals / Materials": (
+        "ALB,LAC,TMQ,MP,CRML,USAR,CMP,CGAU,AA,CENX,"
+        "SCCO,FCX,TECK,RIO,BHP,XME,COPX,TMC,FLKR,EWY,"
+        "TX,NVA,GORO,UUUU,EU,LEU,NNE,CCJ,UROY,CRMX"
+    ),
 }
 
 POSITIVE_WORDS = [
@@ -1328,7 +1363,7 @@ if source == "Nightly Screener Top 10":
         st.sidebar.error(f"Could not load nightly dump: {e}")
 else:
     preset = st.sidebar.selectbox("Watchlist preset", ["Custom"] + list(PRESETS.keys()), index=1)
-    default_tickers = PRESETS.get(preset, "SMR,IONQ,UEC,CCJ,NVDA")
+    default_tickers = PRESETS.get(preset, "CCJ,SMR,NNE,OKLO,LEU,EU,UUUU,UROY,GEV,CEG")
     tickers_raw = st.sidebar.text_area("Tickers (comma separated)", value=default_tickers, height=90)
     tickers = [t.strip().upper() for t in re.split(r"[,\s]+", tickers_raw) if t.strip()][:30]
 
@@ -1401,7 +1436,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v2.6 - catalyst filters"
+APP_VERSION = "v2.7 - watchlist"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5a623'>PAUSED</span> &nbsp;last scan {last_scan}"
