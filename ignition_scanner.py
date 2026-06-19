@@ -106,6 +106,20 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; letter-spacing: 0.5px; 
     border: 1px solid #2b3a4f;
     color: #9fb6d0;
 }
+.fuel-tag a { color: inherit; text-decoration: none; }
+.fuel-tag a:hover { text-decoration: underline; }
+/* Catalyst tag color classes */
+.ct-earnings  { background:#1a2e1a; border-color:#2a6b2a; color:#6ddb6d; }
+.ct-fda       { background:#2a1a2e; border-color:#7a2a8a; color:#d06de0; }
+.ct-buyout    { background:#2e2a1a; border-color:#9a7a1a; color:#e8c84a; }
+.ct-legal     { background:#2e1a1a; border-color:#8a3a3a; color:#e08080; }
+.ct-partnership { background:#1a2a2e; border-color:#1a6a8a; color:#4ac0e0; }
+.ct-squeeze   { background:#2e1f1a; border-color:#9a5a1a; color:#e09a4a; }
+.ct-breakout  { background:#1a2520; border-color:#1a7a4a; color:#4ae0a0; }
+.ct-geopolitical { background:#1f1a2e; border-color:#4a3a8a; color:#9a80d0; }
+.ct-rate      { background:#2e2a1f; border-color:#8a7a3a; color:#d0c060; }
+.ct-bimodal   { background:#2e2410; border-color:#f5b942; color:#f5b942; }
+.ct-dtc       { background:#1a2030; border-color:#3a6090; color:#70a0d0; }
 .crow {
     background: #10151f;
     border: 1px solid #1c2533;
@@ -1176,7 +1190,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v1.9 - catalysts"
+APP_VERSION = "v2.0 - catalyst links"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5b942'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1351,6 +1365,53 @@ if reversals_now:
     )
     st.markdown(f"<div class='ignite-banner rev'>GAP REVERSAL &nbsp; {names}</div>", unsafe_allow_html=True)
 
+# Catalyst tag definitions: label, CSS class, URL template (%s = ticker)
+CATALYST_TAG_META = {
+    "earnings":     ("EARNINGS",     "ct-earnings",     "https://finance.yahoo.com/calendar/earnings?symbol=%s"),
+    "fda":          ("FDA",          "ct-fda",          "https://www.fda.gov/patients/drug-approvals-and-databases/drugsfda-data-files"),
+    "buyout":       ("M&A",          "ct-buyout",       "https://finance.yahoo.com/quote/%s/news/"),
+    "legal":        ("LEGAL",        "ct-legal",        "https://efts.sec.gov/LATEST/search-index?q=%s&dateRange=custom&startdt=2024-01-01&forms=8-K"),
+    "partnership":  ("PARTNER",      "ct-partnership",  "https://finance.yahoo.com/quote/%s/news/"),
+    "squeeze":      ("SQUEEZE",      "ct-squeeze",      "https://finviz.com/quote.ashx?t=%s"),
+    "breakout":     ("BREAKOUT",     "ct-breakout",     "https://finviz.com/quote.ashx?t=%s&ty=c&ta=1&p=d"),
+    "geopolitical": ("GEO/MACRO",   "ct-geopolitical", "https://finance.yahoo.com/quote/%s/news/"),
+    "rate":         ("FED/RATES",    "ct-rate",         "https://www.federalreserve.gov/releases/h15/"),
+}
+
+BIMODAL_TAG = ("BIMODAL", "ct-bimodal", "https://finance.yahoo.com/calendar/earnings?symbol=%s")
+DTC_TAG_CLASS = "ct-dtc"
+
+
+def catalyst_pill(label: str, css_class: str, url: str) -> str:
+    """Return an HTML span pill that is a clickable colored link."""
+    return (
+        f"<span class='fuel-tag {css_class}'>"
+        f"<a href='{url}' target='_blank' rel='noopener'>{label}</a>"
+        f"</span>"
+    )
+
+
+def build_catalyst_tags_html(ticker: str, cat_tags: list, bimodal: bool,
+                              dtc=None, earnings_days=None) -> str:
+    """Build the full row of colored clickable catalyst pills for a ticker."""
+    parts = []
+    if bimodal:
+        label, css, url_tpl = BIMODAL_TAG
+        parts.append(catalyst_pill(label, css, url_tpl % ticker))
+    for tag in cat_tags:
+        if tag not in CATALYST_TAG_META:
+            continue
+        label, css, url_tpl = CATALYST_TAG_META[tag]
+        # Enrich label with dynamic data where we have it
+        if tag == "earnings" and earnings_days is not None:
+            label = f"EARN {earnings_days}d" if earnings_days >= 0 else f"EARN -{abs(earnings_days)}d"
+        parts.append(catalyst_pill(label, css, url_tpl % ticker))
+    if dtc and dtc >= 5:
+        url = f"https://finviz.com/quote.ashx?t={ticker}"
+        parts.append(catalyst_pill(f"DTC {dtc}d", DTC_TAG_CLASS, url))
+    return "".join(parts)
+
+
 def render_compact(rows_data):
     """Phone-friendly card rows: ticker + big color-coded score, a slim score
     bar, and one line of key numbers. Readable at 380px wide."""
@@ -1379,11 +1440,8 @@ def render_compact(rows_data):
         cat_tags = f.get("catalyst_tags") or []
         bimodal = f.get("bimodal_event", False)
         ed = f.get("earnings_days")
-        tag_html = ""
-        if bimodal:
-            tag_html += "<span style='color:#f5b942;font-family:Space Mono;font-size:11px;border:1px solid #f5b942;border-radius:3px;padding:1px 5px;margin-right:4px'>BIMODAL</span>"
-        for t in cat_tags[:3]:
-            tag_html += f"<span style='color:#5b8db8;font-family:Space Mono;font-size:10px;border:1px solid #2b4a6b;border-radius:3px;padding:1px 5px;margin-right:3px'>{t.upper()}</span>"
+        dtc = f.get("days_to_cover")
+        tag_html = build_catalyst_tags_html(r["ticker"], cat_tags, bimodal, dtc, ed)
         html.append(
             f"<div class='crow{hot}'>"
             f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>"
@@ -1563,26 +1621,31 @@ with left:
             rsel = next((r for r in ok if r["ticker"] == sel), None)
             if rsel:
                 f = rsel["fuel"]
-                tags = []
+                ticker_sel = rsel["ticker"]
+                plain_tags = []
                 if f.get("short_pct_float"):
-                    tags.append(f"short float {f['short_pct_float']*100:.1f}%")
-                if f.get("days_to_cover"):
-                    tags.append(f"DTC {f['days_to_cover']}d")
+                    plain_tags.append(f"short float {f['short_pct_float']*100:.1f}%")
                 if f.get("float_shares"):
-                    tags.append(f"float {f['float_shares']/1e6:.0f}M")
+                    plain_tags.append(f"float {f['float_shares']/1e6:.0f}M")
                 if f.get("insider_buys"):
-                    tags.append(f"{f['insider_buys']} insider buys 90d")
+                    plain_tags.append(f"{f['insider_buys']} insider buys 90d")
                 if f.get("news_count_48h"):
-                    tags.append(f"{f['news_count_48h']} headlines 48h")
-                ed = f.get("earnings_days")
-                if ed is not None:
-                    tags.append(f"earnings in {ed}d" if ed >= 0 else f"earnings {abs(ed)}d ago")
-                if f.get("bimodal_event"):
-                    tags.append("BIMODAL EVENT")
-                for ct in (f.get("catalyst_tags") or []):
-                    tags.append(ct.upper())
-                if tags:
-                    st.markdown(" ".join(f"<span class='fuel-tag'>{t}</span>" for t in tags), unsafe_allow_html=True)
+                    plain_tags.append(f"{f['news_count_48h']} headlines 48h")
+                if f.get("inst_pct"):
+                    plain_tags.append(f"inst {f['inst_pct']}%")
+                plain_html = " ".join(
+                    f"<span class='fuel-tag'>{t}</span>" for t in plain_tags
+                )
+                cat_html = build_catalyst_tags_html(
+                    ticker_sel,
+                    f.get("catalyst_tags") or [],
+                    f.get("bimodal_event", False),
+                    f.get("days_to_cover"),
+                    f.get("earnings_days"),
+                )
+                combined = plain_html + ("&nbsp;" if plain_html and cat_html else "") + cat_html
+                if combined:
+                    st.markdown(combined, unsafe_allow_html=True)
                 if f.get("latest_headline"):
                     st.caption(f"Latest: {f['latest_headline']}")
 
