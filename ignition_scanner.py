@@ -163,12 +163,49 @@ POSITIVE_WORDS = [
     "contract", "award", "awarded", "partnership", "approval", "approved",
     "buyback", "acquisition", "acquire", "breakthrough", "expands", "wins",
     "guidance raised", "outperform", "buy rating", "patent", "milestone",
+    "merger", "takeover", "deal", "agreement", "selected", "chosen",
+    "fda approved", "cleared", "accelerated approval", "positive results",
+    "positive data", "phase 3", "exceeded", "top-line", "revenue growth",
 ]
 NEGATIVE_WORDS = [
     "miss", "misses", "downgrade", "downgraded", "cuts", "offering",
     "dilution", "lawsuit", "investigation", "recall", "halts", "delay",
     "bankruptcy", "warning", "sell rating", "underperform", "resigns",
+    "rejected", "fda rejection", "clinical hold", "adverse", "fraud",
+    "subpoena", "default", "going concern", "lowered guidance",
 ]
+
+# Catalyst keyword buckets — each maps to a catalyst type for tagging
+CATALYST_KEYWORDS = {
+    "earnings":    ["earnings", "eps", "revenue beat", "quarterly results",
+                    "q1", "q2", "q3", "q4", "fiscal", "guidance", "outlook",
+                    "profit", "loss", "surprise"],
+    "fda":         ["fda", "food and drug", "pdufa", "nda", "bla", "inda",
+                    "clinical trial", "phase 1", "phase 2", "phase 3",
+                    "approval", "approved", "clearance", "510k", "drug",
+                    "biologics", "clinical hold"],
+    "legal":       ["lawsuit", "settlement", "verdict", "litigation",
+                    "court", "ruling", "judgment", "class action", "sued",
+                    "damages", "injunction", "doj", "sec investigation",
+                    "subpoena", "antitrust"],
+    "buyout":      ["acquisition", "acquire", "merger", "takeover", "buyout",
+                    "going private", "lbo", "strategic review", "sale process",
+                    "offer to acquire", "bid for", "deal with", "m&a"],
+    "partnership": ["partnership", "collaboration", "joint venture", "alliance",
+                    "agreement", "contract", "mou", "supply agreement",
+                    "licensing deal", "strategic agreement", "selected by"],
+    "squeeze":     ["short squeeze", "short interest", "most shorted",
+                    "short seller", "short covering", "days to cover"],
+    "breakout":    ["52-week high", "all-time high", "breakout", "new high",
+                    "technical breakout", "resistance broken", "record high"],
+    "geopolitical":["tariff", "sanction", "trade war", "geopolitical",
+                    "supply chain", "export ban", "china", "russia", "ukraine",
+                    "energy crisis", "oil", "opec", "nato", "war", "conflict",
+                    "defense contract", "pentagon"],
+    "rate":        ["fed", "federal reserve", "interest rate", "rate hike",
+                    "rate cut", "fomc", "powell", "inflation", "cpi", "ppi",
+                    "hawkish", "dovish", "treasury yield"],
+}
 
 # ----------------------------------------------------------------------------
 # Helpers
@@ -569,13 +606,23 @@ def prescore_screener(df: pd.DataFrame) -> pd.Series:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_fuel(ticker: str) -> dict:
-    """Slow-moving 'is this primed' data: short interest, float,
-    insider transactions, news, 52-week levels."""
+    """Slow-moving 'primed to move' data: short interest, float,
+    insider transactions, news, 52-week levels, earnings date,
+    sector, institutional ownership, and full catalyst detection."""
     out = {
+        # existing
         "short_pct_float": None, "float_shares": None,
         "insider_net_buy_usd": 0.0, "insider_buys": 0, "insider_sells": 0,
         "news_count_48h": 0, "news_sentiment": 0, "latest_headline": "",
         "high_52w": None, "name": ticker,
+        # new catalyst fields
+        "earnings_days": None,       # days until next earnings (negative = past)
+        "days_to_cover": None,       # short interest / avg daily vol
+        "inst_pct": None,            # institutional ownership %
+        "sector": "",                # sector string
+        "catalyst_tags": [],         # list of detected catalyst types
+        "catalyst_score": 0.0,       # 0-100 composite catalyst sub-score
+        "bimodal_event": False,      # binary event within ±3 days
     }
     try:
         tk = yf.Ticker(ticker)
@@ -584,10 +631,45 @@ def fetch_fuel(ticker: str) -> dict:
             info = tk.info or {}
         except Exception:
             info = {}
+
         out["short_pct_float"] = info.get("shortPercentOfFloat")
         out["float_shares"] = info.get("floatShares")
         out["high_52w"] = info.get("fiftyTwoWeekHigh")
         out["name"] = info.get("shortName") or ticker
+        out["sector"] = info.get("sector") or ""
+
+        # Days to cover (short interest / avg daily volume)
+        shares_short = info.get("sharesShort")
+        avg_vol = info.get("averageVolume") or info.get("averageDailyVolume10Day")
+        if shares_short and avg_vol and avg_vol > 0:
+            out["days_to_cover"] = round(shares_short / avg_vol, 1)
+
+        # Institutional ownership
+        inst = info.get("heldPercentInstitutions")
+        if inst is not None:
+            out["inst_pct"] = round(float(inst) * 100, 1)
+
+        # Next earnings date
+        try:
+            cal = tk.calendar
+            if isinstance(cal, dict):
+                ed = cal.get("Earnings Date") or cal.get("earningsDate")
+                if ed is not None:
+                    if isinstance(ed, (list, tuple)):
+                        ed = ed[0]
+                    ed_dt = pd.to_datetime(ed, errors="coerce")
+                    if pd.notna(ed_dt):
+                        out["earnings_days"] = (ed_dt.date() - datetime.now().date()).days
+            elif isinstance(cal, pd.DataFrame) and not cal.empty:
+                for lbl in ["Earnings Date", "earningsDate"]:
+                    if lbl in cal.index:
+                        val = cal.loc[lbl].iloc[0]
+                        ed_dt = pd.to_datetime(val, errors="coerce")
+                        if pd.notna(ed_dt):
+                            out["earnings_days"] = (ed_dt.date() - datetime.now().date()).days
+                        break
+        except Exception:
+            pass
 
         # Insider transactions (last ~90 days)
         try:
@@ -624,16 +706,19 @@ def fetch_fuel(ticker: str) -> dict:
         except Exception:
             pass
 
-        # News flow, last 48 hours
+        # News flow + catalyst detection
         try:
             news = tk.news or []
             now = datetime.now(timezone.utc)
             sent = 0
             count = 0
             latest = ""
+            cat_hits: dict[str, int] = {k: 0 for k in CATALYST_KEYWORDS}
             for item in news:
                 content = item.get("content", item)
                 title = content.get("title", "") or ""
+                summary = content.get("summary", "") or ""
+                full_text = (title + " " + summary).lower()
                 pub = content.get("pubDate") or content.get("providerPublishTime")
                 ts = None
                 if isinstance(pub, (int, float)):
@@ -647,14 +732,77 @@ def fetch_fuel(ticker: str) -> dict:
                     count += 1
                     if not latest:
                         latest = title
-                    low = title.lower()
-                    sent += sum(1 for w in POSITIVE_WORDS if w in low)
-                    sent -= sum(1 for w in NEGATIVE_WORDS if w in low)
+                    sent += sum(1 for w in POSITIVE_WORDS if w in full_text)
+                    sent -= sum(1 for w in NEGATIVE_WORDS if w in full_text)
+                # Catalyst scan across all recent news (7 days for catalyst tagging)
+                if ts is not None and (now - ts) <= timedelta(days=7):
+                    for cat, kws in CATALYST_KEYWORDS.items():
+                        cat_hits[cat] += sum(1 for w in kws if w in full_text)
             out["news_count_48h"] = count
             out["news_sentiment"] = sent
             out["latest_headline"] = latest
+            # Tag any catalyst with at least 1 keyword hit
+            out["catalyst_tags"] = [c for c, h in cat_hits.items() if h > 0]
         except Exception:
             pass
+
+        # Bimodal event: earnings within ±3 days OR fda/legal catalyst in news
+        ed = out["earnings_days"]
+        bimodal_news = any(t in out["catalyst_tags"] for t in ("fda", "legal", "buyout"))
+        out["bimodal_event"] = (
+            (ed is not None and -1 <= ed <= 3) or bimodal_news
+        )
+
+        # ------------------------------------------------------------------
+        # Catalyst sub-score (0-100)
+        # Weights reflect how reliably each catalyst produces a sharp move
+        # ------------------------------------------------------------------
+        cat_sc = 0.0
+        tags = out["catalyst_tags"]
+
+        # Earnings proximity: peak score 2 days before, decays fast after
+        if ed is not None:
+            if 0 <= ed <= 2:
+                cat_sc += 30.0   # imminent earnings = binary event
+            elif ed == 3:
+                cat_sc += 20.0
+            elif 4 <= ed <= 7:
+                cat_sc += 12.0
+            elif -1 <= ed < 0:
+                cat_sc += 15.0   # just reported, still in motion
+
+        if "fda" in tags:
+            cat_sc += 25.0       # FDA binary event, often explosive
+        if "buyout" in tags:
+            cat_sc += 25.0       # M&A premium = instant catalyst
+        if "partnership" in tags:
+            cat_sc += 15.0
+        if "legal" in tags:
+            cat_sc += 10.0       # verdict risk, can go either way
+        if "squeeze" in tags:
+            cat_sc += 10.0
+        if "breakout" in tags:
+            cat_sc += 8.0
+        if "geopolitical" in tags:
+            cat_sc += 6.0
+        if "rate" in tags:
+            cat_sc += 5.0
+        if "earnings" in tags and ed is None:
+            cat_sc += 8.0       # earnings headlines without a clear date
+
+        # Days-to-cover bonus: >= 5 days = serious squeeze setup
+        dtc = out["days_to_cover"]
+        if dtc and dtc >= 10:
+            cat_sc += 15.0
+        elif dtc and dtc >= 5:
+            cat_sc += 8.0
+
+        # Bimodal event multiplier: elevates catalyst score across the board
+        if out["bimodal_event"]:
+            cat_sc = min(cat_sc * 1.25, 100.0)
+
+        out["catalyst_score"] = clamp(cat_sc)
+
     except Exception:
         pass
     return out
@@ -833,8 +981,9 @@ def compute_signals(ticker: str) -> dict:
         h52_sc = 30.0
 
     s["fuel_score"] = (
-        0.25 * short_sc + 0.25 * ins_sc + 0.25 * news_sc
-        + 0.10 * float_sc + 0.15 * h52_sc
+        0.18 * short_sc + 0.18 * ins_sc + 0.18 * news_sc
+        + 0.08 * float_sc + 0.12 * h52_sc
+        + 0.26 * clamp(fuel.get("catalyst_score", 0.0))
     )
 
     s["score"] = 0.6 * s["ignition_score"] + 0.4 * s["fuel_score"]
@@ -881,6 +1030,28 @@ def compute_signals(ticker: str) -> dict:
         s["reasons"].append("insider buying")
     if nc >= 2:
         s["reasons"].append(f"{nc} headlines 48h")
+
+    # Catalyst tags as readable reasons
+    tag_labels = {
+        "earnings": f"earnings in {fuel.get('earnings_days')}d" if fuel.get("earnings_days") is not None else "earnings news",
+        "fda": "FDA event",
+        "legal": "legal catalyst",
+        "buyout": "M&A/buyout",
+        "partnership": "partnership",
+        "squeeze": "squeeze setup",
+        "breakout": "breakout news",
+        "geopolitical": "geopolitical",
+        "rate": "rate catalyst",
+    }
+    for tag in (fuel.get("catalyst_tags") or []):
+        label = tag_labels.get(tag)
+        if label:
+            s["reasons"].append(label)
+    if fuel.get("bimodal_event"):
+        s["reasons"].append("BIMODAL EVENT")
+    dtc = fuel.get("days_to_cover")
+    if dtc and dtc >= 5:
+        s["reasons"].append(f"DTC {dtc}d")
 
     return s
 
@@ -1005,7 +1176,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v1.8 - memfix"
+APP_VERSION = "v1.9 - catalysts"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 if paused:
     status = f"<span style='color:#f5b942'>PAUSED</span> &nbsp;last scan {last_scan}"
@@ -1087,6 +1258,19 @@ for r in (ok if not paused else []):
 # Reference key (rendered in its own tab)
 # ----------------------------------------------------------------------------
 REFERENCE_KEY = [
+    ("Catalyst signals - inside Fuel score", "#f5b942", [
+        ("Earnings", "Days until next earnings report. 0-2 days = binary event, highest score. Score decays with distance.", "0-2d = peak score"),
+        ("FDA", "FDA approval/rejection keyword detected in news. Binary event: move can be 30-100%+ either direction.", "most explosive"),
+        ("M&A / Buyout", "Merger, acquisition, or takeover keywords in news. Premium usually materialises fast.", "instant catalyst"),
+        ("Partnership", "New contract, collaboration, licensing, or supply agreement detected in news.", "15 pts"),
+        ("Legal", "Lawsuit verdict, settlement, or regulatory action detected in news.", "binary risk"),
+        ("Squeeze", "Short squeeze keywords + Days-to-Cover (DTC): shares short / avg daily volume. DTC >=10 = serious setup.", "DTC >=5 adds pts"),
+        ("Breakout", "52-week high or breakout keywords detected in news alongside live HOD signal.", "confirmation"),
+        ("Geopolitical", "Tariffs, sanctions, energy crisis, defense contract, or conflict keywords in news.", "sector-specific"),
+        ("Rate", "Fed, FOMC, interest rate, CPI/PPI keywords — affects rate-sensitive sectors most.", "macro context"),
+        ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
+        ("DTC", "Days to Cover: shares short divided by average daily volume. How many days shorts need to exit.", ">=5d = fuel"),
+    ]),
     ("The scores", "#d8e0ea", [
         ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
         ("Ignition", "Is money flowing in right now (live, every refresh)", "jumps 30+ pts = act"),
@@ -1191,6 +1375,15 @@ def render_compact(rows_data):
         else:
             chg_txt = ""
         rvol_txt = f"RVOL {r['rvol']:.1f}x" if r.get("rvol") else ""
+        f = r["fuel"]
+        cat_tags = f.get("catalyst_tags") or []
+        bimodal = f.get("bimodal_event", False)
+        ed = f.get("earnings_days")
+        tag_html = ""
+        if bimodal:
+            tag_html += "<span style='color:#f5b942;font-family:Space Mono;font-size:11px;border:1px solid #f5b942;border-radius:3px;padding:1px 5px;margin-right:4px'>BIMODAL</span>"
+        for t in cat_tags[:3]:
+            tag_html += f"<span style='color:#5b8db8;font-family:Space Mono;font-size:10px;border:1px solid #2b4a6b;border-radius:3px;padding:1px 5px;margin-right:3px'>{t.upper()}</span>"
         html.append(
             f"<div class='crow{hot}'>"
             f"<div class='cline'><span><span class='ctick'>{r['ticker']}</span>{flag}</span>"
@@ -1201,7 +1394,8 @@ def render_compact(rows_data):
             + (f"<span>{pre_txt}</span>" if pre_txt else "")
             + (f"<span>{rvol_txt}</span>" if rvol_txt else "")
             + f"<span>{price_txt} {chg_txt}</span></div>"
-            f"</div>"
+            + (f"<div style='margin-top:4px'>{tag_html}</div>" if tag_html else "")
+            + "</div>"
         )
     st.markdown("".join(html), unsafe_allow_html=True)
 
@@ -1372,12 +1566,21 @@ with left:
                 tags = []
                 if f.get("short_pct_float"):
                     tags.append(f"short float {f['short_pct_float']*100:.1f}%")
+                if f.get("days_to_cover"):
+                    tags.append(f"DTC {f['days_to_cover']}d")
                 if f.get("float_shares"):
                     tags.append(f"float {f['float_shares']/1e6:.0f}M")
                 if f.get("insider_buys"):
                     tags.append(f"{f['insider_buys']} insider buys 90d")
                 if f.get("news_count_48h"):
                     tags.append(f"{f['news_count_48h']} headlines 48h")
+                ed = f.get("earnings_days")
+                if ed is not None:
+                    tags.append(f"earnings in {ed}d" if ed >= 0 else f"earnings {abs(ed)}d ago")
+                if f.get("bimodal_event"):
+                    tags.append("BIMODAL EVENT")
+                for ct in (f.get("catalyst_tags") or []):
+                    tags.append(ct.upper())
                 if tags:
                     st.markdown(" ".join(f"<span class='fuel-tag'>{t}</span>" for t in tags), unsafe_allow_html=True)
                 if f.get("latest_headline"):
