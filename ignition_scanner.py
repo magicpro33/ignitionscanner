@@ -2071,19 +2071,40 @@ def render_compact(rows_data):
         # ── Icon indicator (replaces score number) ───────────────────
         icon_svg = _score_icon(sc, ign, grev)
 
-        # ── Gradient score bar ───────────────────────────────────────
-        # The gradient spans the full 100% width with cool→hot stops;
-        # fill width clips how much of it you see.
-        bar_w  = min(sc, 100)
-        bar_html = (
-            f"<div class='cbar'>"
-            f"<div style='width:100%;height:100%;border-radius:3px;"
-            f"background:linear-gradient(90deg,"
-            f"#1a6b8a 0%,#29b6c8 18%,#3ddc84 35%,"
-            f"#d0b040 55%,#f5a623 72%,#ff6600 85%,#ff2200 100%)'>"
-            f"<div style='float:right;width:{100-bar_w:.0f}%;height:100%;"
-            f"background:#122540;border-radius:0 3px 3px 0'></div>"
-            f"</div></div>"
+        # ── Arc gauge (replaces gradient bar + icon) ─────────────────
+        # SVG semicircle: arc length of the half-circle path =
+        # π × r = π × 40 ≈ 125.7. We use stroke-dasharray=125.7
+        # and stroke-dashoffset = 125.7 × (1 - sc/100) to fill.
+        arc_len   = 125.7
+        fill_len  = arc_len * (sc / 100.0)
+        dash_off  = arc_len - fill_len
+        # Score color matches the gradient zones
+        if sc >= 80:   gc = "#ff2200"
+        elif sc >= 65: gc = "#ff6600"
+        elif sc >= 50: gc = "#f5a623"
+        elif sc >= 35: gc = "#d0b040"
+        elif sc >= 20: gc = "#3ddc84"
+        else:          gc = "#29b6c8"
+        # Gradient id must be unique per card to avoid SVG bleed
+        gid = f"ag{abs(hash(r['ticker']))%9999}"
+        arc_svg = (
+            f"<svg width='80' height='46' viewBox='0 0 90 50' fill='none' "
+            f"aria-label='Score {sc:.0f}'>"
+            f"<defs><linearGradient id='{gid}' x1='0%' y1='0%' x2='100%' y2='0%'>"
+            f"<stop offset='0%' stop-color='#29b6c8'/>"
+            f"<stop offset='30%' stop-color='#3ddc84'/>"
+            f"<stop offset='60%' stop-color='#f5a623'/>"
+            f"<stop offset='100%' stop-color='#ff2200'/>"
+            f"</linearGradient></defs>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='#122540' "
+            f"stroke-width='9' stroke-linecap='round' fill='none'/>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='url(#{gid})' "
+            f"stroke-width='9' stroke-linecap='round' fill='none' "
+            f"stroke-dasharray='{arc_len:.1f}' stroke-dashoffset='{dash_off:.1f}'/>"
+            f"<text x='45' y='43' text-anchor='middle' "
+            f"font-family='Space Mono,monospace' font-size='16' font-weight='700' "
+            f"fill='{gc}'>{sc:.0f}</text>"
+            f"</svg>"
         )
 
         # ── Price tile ───────────────────────────────────────────────
@@ -2143,14 +2164,12 @@ def render_compact(rows_data):
         # ── Assemble card ────────────────────────────────────────────
         parts = [
             f"<div class='crow{hot}'>",
-            # Header: ticker + flag on left, icon on right
+            # Header: ticker + flag left, arc gauge right
             f"<div class='chead'>",
             f"<span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
-            f"<div class='cicon'>{icon_svg}</div>",
+            f"<div class='cicon' style='margin-top:-6px'>{arc_svg}</div>",
             f"</div>",
-            # Gradient score bar
-            bar_html,
-            # 2×2 stat grid
+            # Stat grid (no bar below header — gauge replaces it)
             f"<div class='cgrid' style='grid-template-columns:1fr 1fr 1fr'>",
             price_tile,
             target_tile,
