@@ -214,7 +214,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
           margin-left: 8px; vertical-align: middle;
           font-family: 'Space Mono', monospace; }
 .cflag.rev { color: #29b6c8; border-color: #29b6c8; }
-.cbar   { height: 4px; background: #122540; border-radius: 3px;
+.cbar   { height: 6px; background: #122540; border-radius: 3px;
           margin: 0 0 9px 0; overflow: hidden; }
 .cfill  { height: 100%; border-radius: 3px; }
 .cgrid  { display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
@@ -2062,8 +2062,20 @@ def render_compact(rows_data):
         # ── Icon indicator (replaces score number) ───────────────────
         icon_svg = _score_icon(sc, ign, grev)
 
-        # ── Score bar fill width ─────────────────────────────────────
-        bar_w = min(sc, 100)
+        # ── Gradient score bar ───────────────────────────────────────
+        # The gradient spans the full 100% width with cool→hot stops;
+        # fill width clips how much of it you see.
+        bar_w  = min(sc, 100)
+        bar_html = (
+            f"<div class='cbar'>"
+            f"<div style='width:100%;height:100%;border-radius:3px;"
+            f"background:linear-gradient(90deg,"
+            f"#1a6b8a 0%,#29b6c8 18%,#3ddc84 35%,"
+            f"#d0b040 55%,#f5a623 72%,#ff6600 85%,#ff2200 100%)'>"
+            f"<div style='float:right;width:{100-bar_w:.0f}%;height:100%;"
+            f"background:#122540;border-radius:0 3px 3px 0'></div>"
+            f"</div></div>"
+        )
 
         # ── Price tile ───────────────────────────────────────────────
         price  = r.get("price")
@@ -2112,19 +2124,38 @@ def render_compact(rows_data):
         else:
             rvol_tile = "<div class='ctile'><div class='ctile-lbl'>RVOL</div><div class='ctile-val' style='color:#4a6a8a'>--</div></div>"
 
-        # ── Ignition sub-score tile ──────────────────────────────────
-        ign_sc   = r.get("ignition_score", 0)
-        fuel_sc  = r.get("fuel_score", 0)
-        ign_col  = "#f5a623" if ign_sc >= 70 else ("#d0b040" if ign_sc >= 50 else "#7a9ab8")
-        fuel_col = "#3ddc84" if fuel_sc >= 70 else ("#d0b040" if fuel_sc >= 50 else "#7a9ab8")
+        # ── Visual signal strip (replaces Signal tile numbers) ───────
+        # Uses the same icon logic but tiny, showing IGN and FUEL strength
+        # purely visually — no numbers displayed
+        ign_sc  = r.get("ignition_score", 0)
+        fuel_sc = r.get("fuel_score", 0)
+
+        def _mini_bar(val, hi_col, lo_col="#4a6a8a"):
+            pct = min(val, 100)
+            col = hi_col if val >= 60 else ("#d0b040" if val >= 40 else lo_col)
+            return (
+                f"<div style='width:100%;height:3px;background:#122540;"
+                f"border-radius:2px;margin-top:3px;overflow:hidden'>"
+                f"<div style='width:{pct:.0f}%;height:100%;"
+                f"background:{col};border-radius:2px'></div></div>"
+            )
+
         sub_tile = (
             f"<div class='ctile'>"
-            f"<div class='ctile-lbl'>Signal</div>"
-            f"<div style='display:flex;gap:8px;margin-top:3px'>"
-            f"<div><div class='ctile-sub' style='color:#7a9ab8'>IGN</div>"
-            f"<div class='ctile-val' style='color:{ign_col};font-size:15px'>{ign_sc:.0f}</div></div>"
-            f"<div><div class='ctile-sub' style='color:#7a9ab8'>FUEL</div>"
-            f"<div class='ctile-val' style='color:{fuel_col};font-size:15px'>{fuel_sc:.0f}</div></div>"
+            f"<div class='ctile-lbl'>Momentum</div>"
+            f"<div style='display:flex;gap:8px;margin-top:4px;align-items:flex-end'>"
+            # IGN visual
+            f"<div style='flex:1'>"
+            f"<div style='font-family:Space Mono,monospace;font-size:9px;"
+            f"color:#7a9ab8;letter-spacing:.5px;text-transform:uppercase'>IGN</div>"
+            f"{_mini_bar(ign_sc,'#f5a623')}"
+            f"</div>"
+            # FUEL visual
+            f"<div style='flex:1'>"
+            f"<div style='font-family:Space Mono,monospace;font-size:9px;"
+            f"color:#7a9ab8;letter-spacing:.5px;text-transform:uppercase'>FUEL</div>"
+            f"{_mini_bar(fuel_sc,'#3ddc84')}"
+            f"</div>"
             f"</div></div>"
         )
 
@@ -2143,8 +2174,8 @@ def render_compact(rows_data):
             f"<span><span class='ctick'>{r['ticker']}</span>{flag}</span>",
             f"<div class='cicon'>{icon_svg}</div>",
             f"</div>",
-            # Score bar
-            f"<div class='cbar'><div class='cfill' style='width:{bar_w:.0f}%;background:{color}'></div></div>",
+            # Gradient score bar
+            bar_html,
             # 2×2 stat grid
             f"<div class='cgrid'>",
             price_tile,
