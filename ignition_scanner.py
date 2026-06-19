@@ -1437,6 +1437,13 @@ view_mode = "Compact (phone)"
 show_all_cols = False
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Notifications</div>", unsafe_allow_html=True)
+popup_alerts_on = st.sidebar.toggle(
+    "Show popup alerts",
+    value=False,
+    key="popup_alerts_on",
+    help="When off (default) the scanner runs silently after each scan. "
+         "Turn on to see in-app toast popups for every alert that fires.",
+)
 if ntfy_config():
     notify_on = st.sidebar.toggle("Phone notifications (ntfy)", value=True)
     if st.sidebar.button("Send test notification"):
@@ -1573,7 +1580,8 @@ for r in (ok if should_scan else []):
             "why": ", ".join(r["reasons"][:4]) or "score threshold",
             "kind": kind,
         })
-        st.toast(f"{r['ticker']} score {r['score']:.0f} - {', '.join(r['reasons'][:3])}")
+        if popup_alerts_on:
+            st.toast(f"{r['ticker']} {kind.upper()} {r['score']:.0f} — {', '.join(r['reasons'][:3])}")
         if notify_on:
             why = ", ".join(r["reasons"][:4]) or "score threshold"
             price_txt = f" @ ${r['price']:.2f}" if r.get("price") else ""
@@ -1641,18 +1649,94 @@ def pct_color(v):
 
 @st.cache_data(ttl=900, show_spinner="Loading analysis…")
 def fetch_analyzer(ticker):
-    tk = yf.Ticker(ticker)
-    info = {}
-    try: info = tk.info or {}
-    except Exception: pass
+    """Fetch full analyst data for the Stock Analyzer section.
+
+    Data priority chain:
+      1. Alpaca daily bars for price history (real-time, if keys configured)
+      2. yfinance for fundamentals, info fields, and history fallback
+      3. Nightly scan dump (stock_data.json.gz) for any fields still missing
+    """
+    # ── Step 1: Price history — Alpaca first, Yahoo fallback ─────────
     hist = pd.DataFrame()
+    _ak = alpaca_keys()
+    if _ak:
+        try:
+            k, s = _ak
+            start = (datetime.now(timezone.utc) - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            h_alp = _alpaca_bars(ticker, "1Day", start, k, s)
+            if h_alp is not None and len(h_alp) >= 50:
+                hist = h_alp
+        except Exception:
+            pass
+
+    # Yahoo fallback for history
+    tk = yf.Ticker(ticker)
+    if hist.empty:
+        try:
+            h = tk.history(period="1y", interval="1d")
+            if h is not None and not h.empty:
+                if isinstance(h.columns, pd.MultiIndex):
+                    h.columns = h.columns.get_level_values(0)
+                hist = h
+        except Exception:
+            pass
+
+    # ── Step 2: Fundamentals from yfinance ───────────────────────────
+    info = {}
     try:
-        h = tk.history(period="1y", interval="1d")
-        if h is not None and not h.empty:
-            if isinstance(h.columns, pd.MultiIndex):
-                h.columns = h.columns.get_level_values(0)
-            hist = h
-    except Exception: pass
+        info = tk.info or {}
+    except Exception:
+        pass
+
+    # ── Step 3: Nightly scan dump fallback for missing fields ────────
+    # Fields we want that yfinance often omits for smaller/thinner tickers
+    SCAN_FIELD_MAP = {
+        # scan dump key → info key we'd populate
+        "rsi":            "_scan_rsi",
+        "short_squeeze":  "_scan_squeeze_score",
+        "golden_cross":   "_scan_golden_cross",
+        "mfi_sweet_spot": "_scan_mfi",
+        "obv":            "_scan_obv",
+        "score":          "_scan_composite_score",
+        "piotroski":      "_scan_piotroski",
+        "price":          "_scan_price",
+        "short_pct_float":"shortPercentOfFloat",
+        "short_ratio":    "shortRatio",
+        "beta":           "beta",
+        "pe_ratio":       "trailingPE",
+        "forward_pe":     "forwardPE",
+        "profit_margin":  "profitMargins",
+        "operating_margin":"operatingMargins",
+        "roe":            "returnOnEquity",
+        "roa":            "returnOnAssets",
+        "revenue_growth": "revenueGrowth",
+        "earnings_growth":"earningsGrowth",
+        "current_ratio":  "currentRatio",
+        "market_cap":     "marketCap",
+        "float_shares":   "floatShares",
+        "target_mean":    "targetMeanPrice",
+        "target_low":     "targetLowPrice",
+        "target_high":    "targetHighPrice",
+    }
+    # Fields we still need after yfinance
+    missing = [ik for ik in SCAN_FIELD_MAP.values()
+               if not ik.startswith("_scan_") and not info.get(ik)]
+    if missing:
+        try:
+            dump = load_screener_dump(SCREENER_URL_DEFAULT)
+            sym = ticker.upper()
+            if sym in dump.index:
+                row = dump.loc[sym]
+                for scan_key, info_key in SCAN_FIELD_MAP.items():
+                    val = row.get(scan_key) if hasattr(row, "get") else (
+                        row[scan_key] if scan_key in row.index else None
+                    )
+                    if val is not None and (info_key.startswith("_scan_") or not info.get(info_key)):
+                        info[info_key] = val
+                info["_from_scan_dump"] = True
+        except Exception:
+            pass
+
     return info, hist
 
 # ----------------------------------------------------------------------------
@@ -1880,10 +1964,13 @@ def render_compact(rows_data):
             flag = ""
         pre = r.get("pre_rank")
         pre_txt = f"N {pre:.0f}" if pre is not None else ""
-        price_txt = f"${r['price']:.2f}" if r.get("price") else ""
+        price_txt = (
+            f"<span style='font-size:15px;font-weight:700;color:#f5a623;font-family:Space Mono,monospace'>${r['price']:.2f}</span>"
+            if r.get("price") else ""
+        )
         chg = r.get("chg_pct")
         if chg is not None:
-            chg_color = "#22c55e" if chg >= 0 else "#ef4444"
+            chg_color = "#3ddc84" if chg >= 0 else "#e05555"
             chg_txt = f"<span style='color:{chg_color}'>{chg:+.1f}%</span>"
         else:
             chg_txt = ""
@@ -2188,6 +2275,17 @@ else:
     )
     if pills_html:
         st.markdown(f"<div style='margin:6px 0 14px'>{pills_html}</div>", unsafe_allow_html=True)
+
+    # Data source badge
+    src_parts = []
+    _ak_present = alpaca_keys() is not None
+    if _ak_present and not hist.empty:
+        src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#4dd880;border:1px solid #1e6b35;border-radius:3px;padding:1px 7px'>Alpaca history</span>")
+    else:
+        src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#7a9ab8;border:1px solid #1e3a5f;border-radius:3px;padding:1px 7px'>Yahoo history</span>")
+    if info.get("_from_scan_dump"):
+        src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#d0b040;border:1px solid #907020;border-radius:3px;padding:1px 7px'>nightly dump fallback</span>")
+    st.markdown("<div style='margin:0 0 10px;display:flex;gap:6px;flex-wrap:wrap'>" + "".join(src_parts) + "</div>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:#1e3a5f;margin:12px 0'>", unsafe_allow_html=True)
 
     # ── Three column layout ──────────────────────────────────────────
