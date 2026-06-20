@@ -1392,7 +1392,7 @@ all_presets_mode = st.sidebar.toggle(
 
 source = st.sidebar.radio(
     "Watchlist source",
-    ["Preset / Custom", "Nightly Screener Top 10"],
+    ["Preset / Custom", "Scan over 5000 stocks"],
     index=0,
     disabled=all_presets_mode,
     help="Preset / Custom: scan a hand-picked sector list. "
