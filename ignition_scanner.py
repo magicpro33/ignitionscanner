@@ -1515,7 +1515,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.2 - icon header"
+APP_VERSION = "v3.2"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -1526,8 +1526,11 @@ st.markdown(
     "stroke-linejoin='round' fill='none'/>"
     "<circle cx='36' cy='36' r='4' fill='#f5a623'/>"
     "</svg>"
-    f"<span style='font-family:Space Mono,monospace;font-size:14px;color:#7a9ab8'>"
-    f"{APP_VERSION}</span>"
+    f"<div>"
+    f"<div style='font-family:Space Mono,monospace;font-size:12px;color:#7a9ab8'>{APP_VERSION}</div>"
+    f"<div style='font-family:Rajdhani,sans-serif;font-size:22px;font-weight:700;"
+    f"color:#ffffff;letter-spacing:1px;line-height:1.1'>STOCKS IN THE MONEY ZONE</div>"
+    f"</div>"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -1789,82 +1792,112 @@ def fetch_analyzer(ticker):
 # Reference key (rendered in its own tab)
 # ----------------------------------------------------------------------------
 REFERENCE_KEY = [
+    ("Stock card layout", "#f5a623", [
+        ("Arc gauge", "Semicircular dial in the top-right of every card. Sweeps from teal (cold) through green, amber, orange to red (igniting, score 100). Score number sits at the center bottom in the matching zone color — read it like a speedometer.", "sweep = heat level"),
+        ("IGNITING badge", "Orange badge on the ticker when all four live conditions confirm at once on a flat/up tape: RVOL >=2x, volume surge >=2x, positive velocity, new HOD or VWAP reclaim.", "orange border pulse"),
+        ("GAP REV badge", "Teal badge. Same four conditions fire but stock is down 4%+ or gapped down 4%+ — bounce in a selloff. Tradable but higher failure rate than clean ignition.", "teal border"),
+        ("Price tile", "Current price in amber, change % in green (up) or red (down). Alpaca real-time when API keys set, else Yahoo Finance.", "amber = current"),
+        ("Target tile", "Analyst consensus mean price target. Green = 10%+ upside, amber = 0-10%, red = trading above target. Sourced from yfinance or nightly dump fallback.", "color = upside"),
+        ("RVOL tile", "Relative Volume vs 20-day average. Amber = 3x+ explosive, yellow = 1.5x+ high, grey = normal/low. Plain-English label: explosive / high / normal / low.", "3x+ = explosive"),
+        ("Catalyst pills", "Colored clickable badges below the tiles. Each opens the most relevant source for that catalyst. See Catalyst signals section.", "tap to research"),
+    ]),
     ("Catalyst signals - inside Fuel score", "#f5a623", [
-        ("Earnings", "Days until next earnings report. 0-2 days = binary event, highest score. Score decays with distance.", "0-2d = peak score"),
-        ("FDA", "Healthcare/Pharma/Biotech only. Requires 2+ FDA-specific keywords (e.g. fda + approval). Sector-gated to prevent false positives on unrelated stocks.", "sector-gated, 2 hits"),
-        ("M&A / Buyout", "Any sector. Requires 2+ M&A keywords (e.g. acquire + merger) to avoid single-word false positives.", "2 hits required"),
+        ("Earnings", "Days until next earnings. 0-2 days = binary event, peak score +30. Score decays with distance.", "0-2d = peak score"),
+        ("FDA", "Healthcare/Pharma/Biotech only. Requires 2+ FDA-specific keywords. Sector-gated to prevent false positives on unrelated stocks like hotels.", "sector-gated, 2 hits"),
+        ("M&A / Buyout", "Any sector. Requires 2+ M&A keywords to avoid single-word false positives. Links to Google News.", "2 hits required"),
         ("Partnership", "Any sector. Requires 2+ partnership keywords — single words like agreement are too common alone.", "2 hits required"),
         ("Legal", "Any sector. Requires 2+ legal keywords to confirm a real litigation event.", "2 hits required"),
-        ("Squeeze", "Any sector. 1 specific squeeze keyword sufficient — these terms are precise. Backed by DTC gauge.", "1 hit, see DTC"),
-        ("Breakout", "Any sector. 1 keyword sufficient — technical terms are unambiguous.", "1 hit"),
-        ("Geopolitical", "Energy, Materials, Defense, Industrials, Semis only. Requires 2+ keywords — broad terms like oil or china appear in unrelated news.", "sector-gated, 2 hits"),
-        ("Rate", "Financials, Banks, REITs, Utilities, Insurance only. Requires 2+ keywords — fed/inflation appear everywhere.", "sector-gated, 2 hits"),
-        ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Score multiplied 1.25x.", "amber badge"),
-        ("DTC", "Days to Cover gauge: shares short / avg daily volume. Bar fills red at 10d+ (extreme), amber 7-10d (high), yellow 5-7d (moderate).", "10d+ = extreme"),
-        ("Filtered", "Catalysts detected in headlines but blocked by sector whitelist or keyword threshold appear struck-through below the chart. Shows what was caught and why it was filtered.", "transparency"),
-    ]),
-    ("Price range analysis", "#29b6c8", [
-        ("52W Channel", "52-week price channel bar: shows where the current price sits between the year low and high. Red = near 52W low (weak), amber = mid-range, green = near 52W high (strength). Click the position number to understand momentum regime.", "green near high"),
-        ("Bollinger Bands", "20-day Bollinger Bands: a volatility channel built from the 20-day moving average ±2 standard deviations. Price near the upper band = overbought/extended. Near the lower band = oversold/potential bounce. Price inside bands = neutral.", "2 std dev band"),
-        ("ATR", "Average True Range (14-day): the average daily price range in dollars. Used for stop-loss sizing — place stops 1–1.5x ATR below entry to avoid being shaken out by normal noise. Shows as a % of price for context.", "stop-loss sizing"),
-        ("52W High / Low", "Distance to the 52-week high and above the 52-week low. Within 5% of the 52W high = approaching breakout zone. Momentum stocks tend to cluster near their highs.", "5% = breakout zone"),
-    ]),
-    ("Technical indicators - stock analyzer", "#3ddc84", [
-        ("RSI 14d", "Relative Strength Index on daily bars (14-period). Below 30 = oversold. Above 70 = overbought. 45–70 = momentum sweet spot. Used in the Stock Analyzer for the daily trend picture, separate from the RSI5 live signal on 5-minute bars.", "45-70 sweet spot"),
-        ("MACD daily", "Moving Average Convergence Divergence on daily bars. MACD line above signal line = buyers in control daily trend. Below = sellers. Used in Stock Analyzer for the multi-week momentum direction.", "line vs signal"),
-        ("50-Day MA", "50-day moving average of closing prices. The short-to-medium trend anchor. Price just above the 50MA = ideal low-risk entry zone. Just below = watch for a reclaim. Well below = avoid.", "just above = entry"),
-        ("200-Day MA", "200-day moving average. The primary long-term trend line. Golden Cross: 50MA crosses above 200MA = major institutional buy signal. Death Cross: 50MA below 200MA = long-term caution.", "golden vs death"),
-        ("Volume ratio", "Today's volume vs 20-day average. Above 1.5x = high participation, confirms price moves. Below 0.5x = low conviction, moves are less reliable.", "1.5x+ = confirms"),
-    ]),
-    ("Valuation metrics", "#b0c8e8", [
-        ("Market Cap", "Share price × shares outstanding. Micro cap <$300M, small <$2B, mid <$10B, large >$10B. Size affects volatility, liquidity, and institutional interest.", "size classification"),
-        ("P/E Ratio", "Price-to-Earnings: how much investors pay per $1 of trailing earnings. High P/E = growth expectations priced in. Low P/E = value or declining business. Compare within sector.", "compare in sector"),
-        ("Forward P/E", "P/E based on next 12 months estimated earnings. Forward < Trailing = analysts expect earnings growth — good sign. Forward > Trailing = earnings expected to shrink.", "fwd < trail = growth"),
-        ("P/B Ratio", "Price-to-Book: price vs balance sheet asset value. Below 1.0 = trading below asset value. Above 3.0 = paying premium for brand, IP, or growth.", "below 1 = cheap"),
-        ("P/S Ratio", "Price-to-Sales: useful for pre-profit companies where P/E doesn't apply. Below 2x = reasonable. Above 10x = high growth premium that must be justified.", "below 2x = fair"),
-        ("Beta", "Price volatility relative to the S&P 500. 1.0 = moves with market. 1.5 = 50% more volatile. 0.5 = half as volatile. High beta = bigger swings both directions.", "1.5 = high vol"),
-        ("Float", "Tradeable shares (excluding insiders and restricted). Smaller float means less supply — any buying pressure creates bigger price moves. Under 20M = explosive.", "under 20M = explosive"),
-    ]),
-    ("Financial health metrics", "#ffffff", [
-        ("Profit Margin", "Net income / revenue. What the company keeps per dollar of sales after ALL expenses. Expanding margin = pricing power. Shrinking = rising costs or competition.", "expanding = strong"),
-        ("Operating Margin", "EBIT / revenue. Core business efficiency before interest and taxes. High operating margin with low profit margin = heavy debt load eating into profits.", "core efficiency"),
-        ("ROE", "Return on Equity = net income / shareholders equity. Above 15% = strong. Buffett's key metric for durable competitive advantage. Can be inflated by high debt.", "15%+ = strong"),
-        ("ROA", "Return on Assets = net income / total assets. Not distorted by debt level. Above 5% = solid. Asset-heavy industries (utilities, pipelines) typically have lower ROA.", "5%+ = solid"),
-        ("D/E Ratio", "Debt-to-Equity: total debt / equity. High D/E amplifies both gains and losses. Capital-intensive sectors carry higher D/E by necessity. Rising D/E trend = risk.", "watch the trend"),
-        ("Current Ratio", "Current assets / current liabilities. Can the company pay its bills due in the next 12 months? Above 1.5 = comfortable. Below 1.0 = short-term liquidity risk.", "1.5+ = comfortable"),
-        ("Revenue Growth", "Year-over-year change in total revenue. Growing top line = expanding business. Consistent double-digit growth = highly attractive to institutional buyers.", "10%+ = strong"),
-        ("Earnings Growth", "Year-over-year EPS growth. Growing faster than revenue = increasing efficiency. Shrinking while revenue grows = costs eating into profits.", "10%+ = strong"),
+        ("Squeeze", "Any sector. 1 specific squeeze keyword sufficient — precise terms. Backed by DTC gauge. Links to Finviz.", "1 hit, see DTC"),
+        ("Breakout", "Any sector. 1 keyword sufficient — 52-week high and breakout terms are unambiguous. Links to Finviz chart.", "1 hit"),
+        ("Geopolitical", "Energy, Materials, Defense, Industrials, Semis only. Requires 2+ keywords — oil or china alone appears too broadly.", "sector-gated, 2 hits"),
+        ("Rate", "Financials, Banks, REITs, Utilities, Insurance only. Requires 2+ keywords — fed/inflation appear in nearly every article.", "sector-gated, 2 hits"),
+        ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Catalyst score multiplied 1.25x. Amber BIMODAL badge on card.", "1.25x multiplier"),
+        ("DTC", "Days to Cover gauge: shares short / avg daily volume. Red = 10d+ extreme, amber = 7-10d high, yellow = 5-7d moderate. Links to Finviz.", "10d+ = extreme"),
+        ("Filtered", "Catalysts detected but blocked by sector whitelist or keyword threshold appear struck-through in the Stock Analyzer, showing what was caught and why it was removed.", "transparency"),
     ]),
     ("The scores", "#ffffff", [
-        ("Score", "Overall grade: 60% Ignition + 40% Fuel", "70+ hot, 50+ warm"),
-        ("Ignition", "Is money flowing in right now (live, every refresh)", "jumps 30+ pts = act"),
-        ("Fuel", "Is the stock primed for a big move (updates hourly)", "high + rising IGN = setup"),
-        ("NightlyRank", "Grade from last night's screener dump - yesterday's homework vs today's live Score", "pool picked from top N"),
+        ("Score", "Overall grade 0-100: 60% Ignition + 40% Fuel. Displayed as the arc gauge sweep and center number on every card.", "arc gauge = score"),
+        ("Ignition", "Is money flowing in RIGHT NOW? Rebuilt from live bars every scan. RVOL 25%, surge 15%, velocity 15%, acceleration 10%, VWAP 10%, HOD 10%, RSI5 7.5%, MACD 7.5%.", "live, every scan"),
+        ("Fuel", "Is this stock READY to make a big move? Updates hourly. Short float 18%, insider buying 18%, news/sentiment 18%, catalyst score 26%, float 8%, 52W position 12%.", "hourly update"),
+        ("Catalyst Score", "Sub-score inside Fuel (26% weight). FDA event +25, M&A +25, earnings imminent +30, DTC 10d+ +15, partnership +15, legal +10, squeeze news +10, breakout +8, geo +6, rate +5. Bimodal multiplier 1.25x.", "26% of Fuel"),
+        ("NightlyRank", "How the stock scored in last night's screener dump. Used in Nightly Screener mode to pick the candidate pool.", "pool selection"),
     ]),
     ("Live ignition signals - 60% of Score", "#f5a623", [
-        ("RVOL", "Today's volume vs 20-day norm, adjusted for the U-shaped intraday curve", "2x unusual, 5x explosive"),
-        ("Surge", "Last 3 minutes' volume vs the session's average bar - the exact minutes buying hits", "2x+ = surge live"),
-        ("Vel %/5m", "Price move over the last 5 minutes", "positive + growing"),
-        ("Accel", "Is the velocity itself speeding up or fading", "positive = building"),
-        ("VWAP+", "Price above the volume-weighted average price; a reclaim from below is a trigger", "Y = buyers in control"),
-        ("HOD", "High of day: NEW = fresh breakout, near = coiling within 0.5%", "NEW = trigger"),
-        ("RSI5", "RSI(14) on 5-minute bars", "55-75 thrust, 75+ stretched"),
-        ("MACD", "Fresh bullish cross on 5-minute bars confirms a trend flip", "cross = confirmation"),
+        ("RVOL", "Today's cumulative volume vs 20-day average, adjusted for the U-shaped intraday curve (heavy at open/close, quiet at lunch). 2x = unusual, 5x = explosive.", "2x unusual, 5x explosive"),
+        ("Surge", "Last 3 one-minute bars vs the session average bar. Catches the exact minutes buying pressure hits. 2x+ = surge in progress.", "2x+ = surge live"),
+        ("Vel %/5m", "Price move over the last 5 minutes. Positive and growing = price thrust in progress.", "positive + growing"),
+        ("Accel", "Is the 5-minute velocity itself speeding up? Positive acceleration on top of positive velocity = momentum building not fading.", "positive = building"),
+        ("VWAP", "Price above the volume-weighted average price = buyers controlling the session. A reclaim from below is one of the four IGNITING triggers.", "reclaim = trigger"),
+        ("HOD", "High of Day. NEW = just broke to a new session high, classic ignition trigger. Near = within 0.5%, coiling under resistance.", "NEW = trigger"),
+        ("RSI5", "RSI(14) on 5-minute bars. 55-75 = momentum thrust zone. Above 75 = stretched. Below 50 = no momentum.", "55-75 sweet spot"),
+        ("MACD", "Bullish cross on 5-minute bars: MACD line crosses above signal line. Confirms the trend flip.", "cross = confirmation"),
     ]),
     ("Fuel signals - 40% of Score", "#3ddc84", [
-        ("Short%Flt", "Short interest as % of float - forced buyers if price runs", "15%+ = squeeze fuel"),
-        ("InsiderNet$", "Insider buys minus sells, last 90 days (SEC Form 4)", "positive = accumulating"),
-        ("News48h", "Headlines in the last 48 hours - momentum needs a catalyst", "0 = no sustained move"),
-        ("Float", "Tradable shares outstanding - small float means violent moves", "under 50M = explosive"),
-        ("52wk dist", "Distance to the 52-week high - momentum lives near highs", "within 5% = best"),
+        ("Short%Flt", "Short interest as % of float. 15%+ means heavy bets against the stock — forced short covering adds buying pressure if price rises.", "15%+ = squeeze fuel"),
+        ("InsiderNet$", "Net dollar value of insider buys minus sells, last 90 days (SEC Form 4). Positive = informed accumulation.", "positive = accumulating"),
+        ("News48h", "Headlines in the last 48 hours. Momentum needs a catalyst. Zero news = no sustained move likely.", "0 = no catalyst"),
+        ("Float", "Tradable shares outstanding. Under 50M = explosive potential on any volume spike.", "under 50M = explosive"),
+        ("52wk dist", "Position within the 52-week range. Momentum regimes cluster near highs. Within 5% of 52W high = approaching breakout zone.", "within 5% = best"),
     ]),
-    ("Flags and alerts", "#29b6c8", [
-        ("IGNITING", "All four fire at once on a flat/up day: RVOL >=2x, surge >=2x, positive velocity, new HOD or VWAP reclaim", "urgent push, orange"),
-        ("GAP REV", "Same footprint but the stock is down 4%+ or gapped down 4%+ - a bounce inside a selloff, riskier trade", "high push, teal"),
-        ("ALERT", "Score crossed your sidebar threshold; each ticker alerts once per day", "default push"),
+    ("Direction filters", "#29b6c8", [
+        ("IGNITING", "All four conditions confirm on a flat/up tape: RVOL >=2x, surge >=2x, positive velocity, new HOD or VWAP reclaim. Orange card border. Phone push: urgent priority.", "4 conditions, up tape"),
+        ("GAP REVERSAL", "Same four conditions on a down tape (-4%+ day or -4%+ gap open). Teal card border + GAP REV badge. Bounce in a selloff — higher failure rate than clean ignition.", "bounce in selloff"),
+        ("Direction check", "Gap calculated from first bar open vs yesterday close. High RVOL on a -17% earnings flush is a completely different trade than high RVOL on a +3% day.", "-4% threshold"),
+    ]),
+    ("Data source chain", "#b0c8e8", [
+        ("Alpaca API", "Real-time price history (1-min, 5-min, daily bars) via IEX feed. Powers live Ignition signals and Stock Analyzer history. Set ALPACA_API_KEY + ALPACA_SECRET_KEY in Streamlit secrets.", "fastest, real-time"),
+        ("yfinance", "Yahoo Finance fallback for price history when Alpaca has insufficient bars. Primary source for fundamentals: P/E, margins, analyst targets, short interest, insider transactions, news.", "15 min delay"),
+        ("Nightly dump", "stock_data.json.gz from magicpro33/stock pipeline. Third-tier fallback for missing fundamental fields. Also powers Nightly Screener pre-ranking mode.", "nightly fallback"),
+        ("Data source badge", "Below Stock Analyzer header: green = Alpaca active, grey = Yahoo history, amber = nightly dump filled missing fields.", "badge shows source"),
+    ]),
+    ("Watchlist modes", "#d0b040", [
+        ("Sector presets", "8 sector watchlists from your Webull list: Precious Metals, Energy/Uranium, Defense/Space, Semis/Tech, Quantum/AI/Biotech, Industrials, Income/ETFs, Critical Minerals. Random sector on first app load.", "random on startup"),
+        ("Custom", "Select Custom to show the ticker entry box. Hidden for named presets to keep the sidebar clean.", "hidden unless Custom"),
+        ("Scan ALL presets", "Combines all 8 presets into one scan (187 unique stocks), ETFs excluded. Shows top N by Score.", "ETFs excluded"),
+        ("Nightly Screener", "Downloads your nightly dump once per calendar day, pre-ranks all tickers, picks top N candidates, live-scans them. Watchlist pinned for the day.", "dump once/day"),
+        ("Results slider", "5-30: how many stocks to display after the scan, ranked by Score.", "5-30 stocks"),
+    ]),
+    ("Price range analysis", "#29b6c8", [
+        ("52W Channel", "Visual bar: where current price sits within the year low-to-high range. Red = near 52W low, amber = mid-range, green = near 52W high (momentum regime).", "green near high"),
+        ("Bollinger Bands", "20-day MA +/- 2 standard deviations. Near upper band = overbought. Near lower = oversold/bounce potential. Inside bands = neutral.", "2 std dev band"),
+        ("ATR", "Average True Range 14-day: typical daily price range in dollars. Use for stop-loss sizing — place stops 1-1.5x ATR below entry.", "stop-loss sizing"),
+        ("Price Performance", "Returns over 1 day, 5 days, 1 month, 3 months. Green = positive, red = negative.", "4 timeframes"),
+    ]),
+    ("Technical indicators - stock analyzer", "#3ddc84", [
+        ("RSI 14d", "Daily RSI (14-period). Below 30 = oversold. Above 70 = overbought. 45-70 = momentum sweet spot. Different from RSI5 (5-minute bars in live signals).", "45-70 sweet spot"),
+        ("MACD daily", "MACD on daily bars. Above signal line = daily uptrend. Used for multi-week trend direction — separate from 5-minute MACD in live signals.", "daily trend"),
+        ("50-Day MA", "Price just above 50MA = ideal entry zone. Just below = watch for reclaim. Golden Cross (50MA > 200MA) = major buy signal.", "just above = entry"),
+        ("200-Day MA", "Long-term trend. Golden Cross: 50MA crosses above 200MA = major bull signal. Death Cross: 50MA falls below 200MA = caution.", "golden vs death"),
+        ("Volume ratio", "Today's volume vs 20-day average. Above 1.5x = high participation confirms moves. Below 0.5x = low conviction.", "1.5x+ = confirms"),
+    ]),
+    ("Valuation metrics", "#b0c8e8", [
+        ("Market Cap", "Price x shares. Micro <$300M, small <$2B, mid <$10B, large >$10B. Affects volatility and institutional eligibility.", "size tier"),
+        ("P/E Ratio", "Price / trailing earnings. High = growth priced in. Low = value or declining business. Compare within sector only.", "sector-relative"),
+        ("Forward P/E", "P/E using next 12 months estimates. Forward < Trailing = analysts expect earnings growth.", "fwd < trail = growth"),
+        ("P/B Ratio", "Price / book value. Below 1.0 = trading below assets. Above 3.0 = paying for brand/growth.", "below 1 = cheap"),
+        ("P/S Ratio", "Price / revenue. Below 2x = reasonable. Above 10x = high growth premium.", "below 2x = fair"),
+        ("Beta", "Volatility vs S&P 500. 1.5 = 50% more volatile. High beta = bigger swings both directions.", "1.5 = high vol"),
+        ("Float", "Tradeable shares. Under 20M = explosive on volume.", "under 20M = explosive"),
+        ("Analyst target", "Consensus mean price target on every card: green = 10%+ upside, amber = 0-10%, red = above target.", "on every card"),
+    ]),
+    ("Financial health metrics", "#ffffff", [
+        ("Profit Margin", "Net income / revenue. Expanding = pricing power. Shrinking = rising costs or competition.", "expanding = strong"),
+        ("Operating Margin", "EBIT / revenue. Core business efficiency before interest/taxes.", "core efficiency"),
+        ("ROE", "Return on Equity. Above 15% = strong. Buffett's primary durable-advantage metric.", "15%+ = strong"),
+        ("ROA", "Return on Assets. Above 5% = solid. Not distorted by debt level.", "5%+ = solid"),
+        ("D/E Ratio", "Debt / equity. High D/E amplifies gains and losses. Compare within sector.", "watch the trend"),
+        ("Current Ratio", "Current assets / current liabilities. Above 1.5 = comfortable short-term liquidity.", "1.5+ = comfortable"),
+        ("Revenue Growth", "YoY revenue change. Double-digit growth = attractive to institutions.", "10%+ = strong"),
+        ("Earnings Growth", "YoY EPS change. Growing faster than revenue = margin expansion.", "10%+ = strong"),
+    ]),
+    ("Flags and alerts", "#ff4444", [
+        ("IGNITING", "Orange card border + IGNITING badge. Phone push: urgent priority (punches through Do Not Disturb). Fires once per ticker per day.", "urgent push"),
+        ("GAP REV", "Teal card border + GAP REV badge. Phone push: high priority. Labeled separately from IGNITING so you know the context immediately.", "high push"),
+        ("Score alert", "Score crossed the sidebar threshold (default 65). Phone push: default priority. Each ticker alerts once per day.", "default push"),
+        ("Popup alerts toggle", "Off by default. When on, in-app toast popups fire for every alert. When off, scanner runs silently — ntfy phone pushes still fire independently.", "off by default"),
+        ("ntfy.sh", "Free phone push service. Set NTFY_TOPIC in Streamlit secrets. Topic name is the only password — make it unguessable. Test button in sidebar.", "free, instant"),
     ]),
 ]
-
 
 def render_reference_key():
     """Color-coded glossary of every term in the indicator, as its own tab."""
@@ -1892,7 +1925,7 @@ def render_reference_key():
 # ----------------------------------------------------------------------------
 # Tabs: live scanner + reference key
 # ----------------------------------------------------------------------------
-tab_scan, tab_ref = st.tabs(["Scanner", "Reference key"])
+tab_scan, tab_ref, tab_lookup = st.tabs(["Scanner", "Reference key", "Stock Lookup"])
 
 with tab_ref:
     render_reference_key()
@@ -2679,6 +2712,412 @@ else:
 tab_scan.__exit__(None, None, None)
 
 # ----------------------------------------------------------------------------
+# Stock Lookup tab — enter any ticker or company name, get full analysis
+# ----------------------------------------------------------------------------
+with tab_lookup:
+    st.markdown(
+        "<div style='font-family:Rajdhani,sans-serif;font-size:20px;font-weight:700;"
+        "color:#ffffff;letter-spacing:.6px;margin-bottom:4px'>Stock Lookup</div>"
+        "<div style='font-family:Plus Jakarta Sans,sans-serif;font-size:13px;"
+        "color:#7a9ab8;margin-bottom:14px'>Enter any ticker or company name to run "
+        "the full ignition scan + stock analyzer on demand.</div>",
+        unsafe_allow_html=True,
+    )
+
+    lk_col1, lk_col2 = st.columns([3, 1])
+    with lk_col1:
+        lk_input = st.text_input(
+            "Ticker or company name",
+            placeholder="e.g. NVDA  or  Nvidia",
+            label_visibility="collapsed",
+        )
+    with lk_col2:
+        lk_run = st.button("Analyze ▶", type="primary", use_container_width=True)
+
+    # ── Resolve company name → ticker via yfinance search ────────────
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def resolve_ticker(query: str) -> tuple[str, str]:
+        """Return (ticker, company_name). If query looks like a ticker use it
+        directly; otherwise search yfinance for the best match."""
+        q = query.strip().upper()
+        # Looks like a ticker (1-5 uppercase letters, maybe with . or -)
+        import re as _re
+        if _re.fullmatch(r"[A-Z]{1,5}([.\-][A-Z]{1,2})?", q):
+            try:
+                info = yf.Ticker(q).info or {}
+                name = info.get("shortName") or info.get("longName") or q
+                if info.get("regularMarketPrice") or info.get("currentPrice"):
+                    return q, name
+            except Exception:
+                pass
+        # Search by name
+        try:
+            results = yf.Search(query.strip(), max_results=5).quotes
+            if results:
+                best = results[0]
+                return best.get("symbol", q), best.get("shortname") or best.get("longname") or q
+        except Exception:
+            pass
+        return q, q
+
+    lk_ticker = None
+    if lk_input and (lk_run or st.session_state.get("lk_last_input") == lk_input):
+        st.session_state["lk_last_input"] = lk_input
+        with st.spinner("Resolving ticker…"):
+            lk_ticker, lk_name = resolve_ticker(lk_input)
+        if lk_ticker:
+            st.markdown(
+                f"<div style='font-family:Space Mono,monospace;font-size:12px;"
+                f"color:#7a9ab8;margin:4px 0 14px'>Analyzing "
+                f"<strong style='color:#f5a623'>{lk_ticker}</strong>"
+                f" — {lk_name}</div>",
+                unsafe_allow_html=True,
+            )
+
+    if lk_ticker:
+        # ── Live ignition scan ────────────────────────────────────────
+        with st.spinner(f"Running ignition scan on {lk_ticker}…"):
+            lk_sig = compute_signals(lk_ticker)
+            lk_fuel = fetch_fuel(lk_ticker)
+            lk_sig["fuel"] = lk_fuel
+
+        # Header metrics row
+        sc   = lk_sig["score"]
+        gc   = "#ff2200" if sc >= 80 else ("#ff6600" if sc >= 65 else
+               "#f5a623" if sc >= 50 else ("#d0b040" if sc >= 35 else "#29b6c8"))
+        ign  = lk_sig.get("igniting", False)
+        grev = lk_sig.get("gap_reversal", False)
+        status = "🔥 IGNITING" if ign else ("↩ GAP REVERSAL" if grev else "")
+        status_col = "#f5a623" if ign else ("#29b6c8" if grev else "")
+
+        m1c, m2c, m3c, m4c, m5c = st.columns(5)
+        m1c.metric("Score",     f"{sc:.0f}")
+        m2c.metric("Ignition",  f"{lk_sig['ignition_score']:.0f}")
+        m3c.metric("Fuel",      f"{lk_sig['fuel_score']:.0f}")
+        m4c.metric("RVOL",      f"{lk_sig['rvol']:.1f}x" if lk_sig.get("rvol") else "--")
+        m5c.metric("Price",     f"${lk_sig['price']:.2f}" if lk_sig.get("price") else "--",
+                   delta=f"{lk_sig['chg_pct']:+.1f}%" if lk_sig.get("chg_pct") is not None else None)
+
+        if status:
+            st.markdown(
+                f"<div style='font-family:Rajdhani,sans-serif;font-size:16px;"
+                f"font-weight:700;color:{status_col};margin:4px 0 8px'>{status}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Arc gauge + signal pills
+        arc_len = 125.7
+        bar_w   = min(sc, 100)
+        dash_off = arc_len * (1 - bar_w / 100)
+        gid = f"lkarc{abs(hash(lk_ticker)) % 9999}"
+        arc_svg = (
+            f"<svg width='100' height='58' viewBox='0 0 90 50' fill='none'>"
+            f"<defs><linearGradient id='{gid}' x1='0%' y1='0%' x2='100%' y2='0%'>"
+            f"<stop offset='0%' stop-color='#29b6c8'/>"
+            f"<stop offset='30%' stop-color='#3ddc84'/>"
+            f"<stop offset='60%' stop-color='#f5a623'/>"
+            f"<stop offset='100%' stop-color='#ff2200'/>"
+            f"</linearGradient></defs>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='#122540' "
+            f"stroke-width='9' stroke-linecap='round' fill='none'/>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='url(#{gid})' "
+            f"stroke-width='9' stroke-linecap='round' fill='none' "
+            f"stroke-dasharray='{arc_len:.1f}' stroke-dashoffset='{dash_off:.1f}'/>"
+            f"<text x='45' y='43' text-anchor='middle' "
+            f"font-family='Space Mono,monospace' font-size='18' font-weight='700' "
+            f"fill='{gc}'>{sc:.0f}</text></svg>"
+        )
+
+        pill_html = ""
+        for reason in lk_sig.get("reasons", [])[:8]:
+            pill_html += (
+                f"<span style='display:inline-block;background:#0d1e33;color:#f5a623;"
+                f"border:1px solid #1e3a5f;border-radius:4px;font-family:Space Mono,monospace;"
+                f"font-size:11px;padding:2px 8px;margin:2px 3px 2px 0'>{reason}</span>"
+            )
+        cat_html = build_catalyst_tags_html(
+            lk_ticker,
+            lk_fuel.get("catalyst_tags") or [],
+            lk_fuel.get("bimodal_event", False),
+            lk_fuel.get("days_to_cover"),
+            lk_fuel.get("earnings_days"),
+        )
+        st.markdown(
+            f"<div style='display:flex;gap:16px;align-items:flex-start;margin:8px 0 14px'>"
+            f"<div>{arc_svg}</div>"
+            f"<div style='flex:1'>"
+            f"<div style='margin-bottom:6px'>{pill_html}</div>"
+            f"<div>{cat_html}</div>"
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+
+        suppressed = lk_fuel.get("catalyst_suppressed") or []
+        if suppressed:
+            sup_html = " ".join(
+                f"<span style='font-family:Space Mono,monospace;font-size:10px;"
+                f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
+                f"padding:1px 6px;margin-right:4px;text-decoration:line-through;"
+                f"display:inline-block'>{s.upper()}</span>"
+                for s in suppressed
+            )
+            st.markdown(
+                f"<div style='margin-bottom:12px;font-family:Space Mono,monospace;"
+                f"font-size:10px;color:#4a6a8a'>filtered (sector: "
+                f"{lk_fuel.get('sector','unknown')}): {sup_html}</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<hr style='border-color:#1e3a5f;margin:12px 0'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-family:Rajdhani,sans-serif;font-size:18px;font-weight:700;"
+            "color:#ffffff;letter-spacing:.5px;margin-bottom:10px'>Stock Analyzer</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Full Stock Analyzer (reuses all module-level helpers) ─────
+        with st.spinner("Loading deep analysis…"):
+            lk_info, lk_hist = fetch_analyzer(lk_ticker)
+
+        # Parse fields — identical to the Scanner tab's analyzer block
+        px    = float(lk_info.get("currentPrice") or lk_info.get("regularMarketPrice") or
+                      lk_info.get("previousClose") or lk_sig.get("price") or 0)
+        name  = lk_info.get("shortName") or lk_info.get("longName") or lk_ticker
+        sec   = lk_info.get("sector") or ""
+        ind   = lk_info.get("industry") or ""
+        mcap  = lk_info.get("marketCap") or 0
+        pe    = lk_info.get("trailingPE")
+        fwpe  = lk_info.get("forwardPE")
+        pb    = lk_info.get("priceToBook")
+        ps    = lk_info.get("priceToSalesTrailing12Months")
+        beta  = lk_info.get("beta")
+        hi52  = lk_info.get("fiftyTwoWeekHigh") or 0
+        lo52  = lk_info.get("fiftyTwoWeekLow") or 0
+        spf   = lk_info.get("shortPercentOfFloat")
+        sratio= lk_info.get("shortRatio")
+        am    = lk_info.get("targetMeanPrice")
+        al    = lk_info.get("targetLowPrice")
+        ahigh = lk_info.get("targetHighPrice")
+        nana  = lk_info.get("numberOfAnalystOpinions") or 0
+        recky = lk_info.get("recommendationKey") or ""
+        rg    = lk_info.get("revenueGrowth")
+        eg    = lk_info.get("earningsGrowth")
+        pm    = lk_info.get("profitMargins")
+        om    = lk_info.get("operatingMargins")
+        roe   = lk_info.get("returnOnEquity")
+        roa   = lk_info.get("returnOnAssets")
+        deq   = lk_info.get("debtToEquity")
+        cr    = lk_info.get("currentRatio")
+        fl    = lk_info.get("floatShares")
+        aus   = ((am - px) / px * 100) if (am and px > 0) else None
+        rng52 = ((px - lo52) / (hi52 - lo52) * 100) if (hi52 and lo52 and hi52 != lo52) else None
+
+        # Compute technicals from history
+        rsi_v = ma50_v = ma200_v = macd_v = macd_s = None
+        vol_avg = vol_td = atr = bb_upper = bb_mid = bb_lower = None
+        pct1d = pct5d = pct1m = pct3m = None
+
+        if not lk_hist.empty and len(lk_hist) >= 26:
+            cl = lk_hist["Close"].dropna()
+            vl = lk_hist["Volume"].dropna() if "Volume" in lk_hist else pd.Series(dtype=float)
+            try:
+                dlt = cl.diff(); g = dlt.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+                ls  = (-dlt.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+                rs  = (100 - (100 / (1 + g / ls.replace(0, np.nan)))).dropna()
+                rsi_v = float(rs.iloc[-1]) if not rs.empty else None
+            except Exception: pass
+            try:
+                e12 = cl.ewm(span=12, adjust=False).mean()
+                e26 = cl.ewm(span=26, adjust=False).mean()
+                ml  = e12 - e26; sl = ml.ewm(span=9, adjust=False).mean()
+                macd_v = float(ml.iloc[-1]); macd_s = float(sl.iloc[-1])
+            except Exception: pass
+            try:
+                if len(cl) >= 50:  ma50_v  = float(cl.rolling(50).mean().iloc[-1])
+                if len(cl) >= 200: ma200_v = float(cl.rolling(200).mean().iloc[-1])
+            except Exception: pass
+            try:
+                if len(vl) >= 20: vol_avg = float(vl.iloc[-20:].mean()); vol_td = float(vl.iloc[-1])
+            except Exception: pass
+            try:
+                if len(cl) >= 2:  pct1d = (float(cl.iloc[-1]) - float(cl.iloc[-2])) / float(cl.iloc[-2]) * 100
+                if len(cl) >= 6:  pct5d = (float(cl.iloc[-1]) - float(cl.iloc[-6])) / float(cl.iloc[-6]) * 100
+                if len(cl) >= 22: pct1m = (float(cl.iloc[-1]) - float(cl.iloc[-22])) / float(cl.iloc[-22]) * 100
+                if len(cl) >= 66: pct3m = (float(cl.iloc[-1]) - float(cl.iloc[-66])) / float(cl.iloc[-66]) * 100
+            except Exception: pass
+            try:
+                hi = lk_hist["High"].dropna(); lo2 = lk_hist["Low"].dropna()
+                tr = pd.concat([hi - lo2, (hi - cl.shift()).abs(), (lo2 - cl.shift()).abs()], axis=1).max(axis=1)
+                atr = float(tr.rolling(14).mean().iloc[-1])
+            except Exception: pass
+            try:
+                if len(cl) >= 20:
+                    bm = cl.rolling(20).mean(); bstd = cl.rolling(20).std()
+                    bb_mid = float(bm.iloc[-1]); bb_upper = float((bm + 2*bstd).iloc[-1])
+                    bb_lower = float((bm - 2*bstd).iloc[-1])
+            except Exception: pass
+
+        # Data source badge
+        _ak_present = alpaca_keys() is not None
+        src_badge = (
+            "<span style='font-family:Space Mono,monospace;font-size:10px;color:#4dd880;"
+            "border:1px solid #1e6b35;border-radius:3px;padding:1px 7px'>Alpaca history</span>"
+        ) if (_ak_present and not lk_hist.empty) else (
+            "<span style='font-family:Space Mono,monospace;font-size:10px;color:#7a9ab8;"
+            "border:1px solid #1e3a5f;border-radius:3px;padding:1px 7px'>Yahoo history</span>"
+        )
+        if lk_info.get("_from_scan_dump"):
+            src_badge += (
+                " <span style='font-family:Space Mono,monospace;font-size:10px;color:#d0b040;"
+                "border:1px solid #907020;border-radius:3px;padding:1px 7px'>nightly dump fallback</span>"
+            )
+
+        st.markdown(
+            f"<div style='margin:0 0 12px;font-family:Plus Jakarta Sans,sans-serif'>"
+            f"<strong style='color:#ffffff'>{name}</strong>"
+            f"  <span style='color:#7a9ab8;font-size:13px'>{sec}{' / ' if sec and ind else ''}{ind}</span></div>"
+            f"<div style='margin-bottom:12px'>{src_badge}</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Three column layout — identical structure to Scanner tab analyzer
+        lk_colA, lk_colB, lk_colC = st.columns(3)
+
+        with lk_colA:
+            az_section("Price Range Analysis")
+            if hi52 and lo52 and px:
+                pct_pos = max(0.0, min(1.0, (px - lo52) / (hi52 - lo52))) if hi52 != lo52 else 0.5
+                bar_pct = int(pct_pos * 100)
+                bar_col = "#4dd880" if pct_pos > 0.7 else ("#d0b040" if pct_pos > 0.35 else "#ff4444")
+                st.markdown(
+                    f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;margin-bottom:12px'>"
+                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
+                    f"<span>52W Low ${lo52:.2f}</span><span>52W High ${hi52:.2f}</span></div>"
+                    f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
+                    f"<div style='background:{bar_col};width:{bar_pct}%;height:100%;border-radius:4px'></div>"
+                    f"<div style='position:absolute;top:-16px;left:calc({bar_pct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bar_col}'>${px:.2f}</div></div>"
+                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
+                    f"Position: <strong style='color:{bar_col}'>{rng52:.1f}% of 52W range</strong></div>"
+                    f"</div>", unsafe_allow_html=True,
+                )
+            if bb_upper and bb_lower and bb_mid and px:
+                bw   = bb_upper - bb_lower
+                bpos = max(0.0, min(1.0, (px - bb_lower) / bw)) if bw > 0 else 0.5
+                bpct = int(bpos * 100)
+                bcol = "#e05555" if bpos > 0.85 else ("#4dd880" if bpos < 0.15 else "#b0c8e8")
+                bb_lbl = "Near upper band (overbought)" if bpos > 0.85 else ("Near lower band (oversold)" if bpos < 0.15 else "Inside bands (neutral)")
+                st.markdown(
+                    f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;margin-bottom:12px'>"
+                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
+                    f"<span>BB Lower ${bb_lower:.2f}</span><span>BB Upper ${bb_upper:.2f}</span></div>"
+                    f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
+                    f"<div style='position:absolute;left:50%;width:1px;height:100%;background:#1e3a5f'></div>"
+                    f"<div style='background:{bcol};width:{bpct}%;height:100%;border-radius:4px'></div>"
+                    f"<div style='position:absolute;top:-16px;left:calc({bpct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bcol}'>${px:.2f}</div></div>"
+                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
+                    f"Bollinger: <strong style='color:{bcol}'>{bb_lbl}</strong></div>"
+                    f"<div style='margin-top:4px;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8'>Mid (20MA): ${bb_mid:.2f} · Width: ${bw:.2f}</div>"
+                    f"</div>", unsafe_allow_html=True,
+                )
+            az_section("Price Performance")
+            perf_rows = [
+                mrow("1 Day", "Daily change vs yesterday's close.", pct_color(pct1d)),
+                mrow("5 Day", "Five trading days.", pct_color(pct5d)),
+                mrow("1 Month", "~22 trading days.", pct_color(pct1m)),
+                mrow("3 Month", "~66 trading days (one quarter).", pct_color(pct3m)),
+            ]
+            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(perf_rows)}</tbody></table>", unsafe_allow_html=True)
+
+        with lk_colB:
+            az_section("Technical Signals")
+            tech_rows = []
+            if rsi_v is not None:
+                ri, rc = (("Oversold", "#4dd880") if rsi_v < 30 else ("Weak", "#ff4444") if rsi_v < 45 else
+                          ("Neutral", "#b0c8e8") if rsi_v < 55 else ("Strong", "#4dd880") if rsi_v < 70 else ("Overbought", "#ff4444"))
+                tech_rows.append(mrow("RSI (14d)", "RSI 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#7a9ab8'>{ri}</span>"))
+            if macd_v is not None and macd_s is not None:
+                mc2 = "#4dd880" if macd_v > macd_s else "#ff4444"
+                mi  = "Bullish — buyers in control" if macd_v > macd_s else "Bearish — sellers in control"
+                tech_rows.append(mrow("MACD", "MACD line above signal = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#7a9ab8'>{mi}</span>"))
+            if ma50_v and px:
+                pvs = (px - ma50_v) / ma50_v * 100
+                m5c2 = "#4dd880" if 0 < pvs < 5 else ("#d0b040" if pvs >= 5 else ("#d0b040" if pvs > -5 else "#ff4444"))
+                tech_rows.append(mrow("50-Day MA", "Short-term trend anchor.", f"${ma50_v:.2f} <span style='color:{m5c2};font-size:11px'>({pvs:+.1f}%)</span>"))
+            if ma200_v:
+                m2c2 = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#ff4444"
+                m2i  = "Golden Cross ↑" if (ma50_v and ma50_v > ma200_v) else "Death Cross ↓"
+                tech_rows.append(mrow("200-Day MA", "Long-term trend line.", f"${ma200_v:.2f} <span style='font-size:11px;color:{m2c2}'>{m2i}</span>"))
+            if vol_avg and vol_td:
+                vr  = vol_td / vol_avg
+                vc  = "#4dd880" if vr > 1.5 else ("#b0c8e8" if vr > 0.5 else "#d0b040")
+                vi  = "Very high" if vr > 2 else ("High" if vr > 1.5 else ("Normal" if vr > 0.5 else "Low"))
+                tech_rows.append(mrow("Volume", "Today vs 20-day average.", f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#7a9ab8'>{vi}</span>"))
+            if atr and px:
+                tech_rows.append(mrow("ATR (14d)", "Average daily range in dollars. Use for stop sizing.", f"${atr:.2f} <span style='color:#7a9ab8;font-size:11px'>({atr/px*100:.1f}% of price)</span>"))
+            if tech_rows:
+                st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(tech_rows)}</tbody></table>", unsafe_allow_html=True)
+
+            az_section("Short Interest & Growth")
+            si_rows = []
+            if spf: si_rows.append(mrow("Short % Float", "% of float sold short. 15%+ = squeeze setup.", az_tag(spf*100, 20, 10, "{:.1f}", "%")))
+            if sratio: si_rows.append(mrow("Days to Cover", "Shares short / avg volume.", az_tag(sratio, 5, 3, "{:.1f}", "d")))
+            if rg: si_rows.append(mrow("Revenue Growth", "YoY revenue change.", az_tag(rg*100, 10, 3, "{:.1f}", "%")))
+            if eg: si_rows.append(mrow("Earnings Growth", "YoY EPS change.", az_tag(eg*100, 10, 3, "{:.1f}", "%")))
+            if si_rows:
+                st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(si_rows)}</tbody></table>", unsafe_allow_html=True)
+
+            az_section("Live Signals")
+            reasons = lk_sig.get("reasons", [])
+            if reasons:
+                sig_html = "".join(
+                    f"<span style='display:inline-block;background:#0d1e33;color:#f5a623;"
+                    f"border:1px solid #1e3a5f;border-radius:4px;font-family:Space Mono,monospace;"
+                    f"font-size:11px;padding:2px 8px;margin:2px 3px 2px 0'>{r}</span>"
+                    for r in reasons
+                )
+                st.markdown(sig_html, unsafe_allow_html=True)
+            else:
+                st.caption("No active live signals.")
+
+        with lk_colC:
+            az_section("Valuation")
+            val_rows = []
+            if mcap:
+                mc_str = f"${mcap/1e9:.2f}B" if mcap >= 1e9 else f"${mcap/1e6:.1f}M"
+                val_rows.append(mrow("Market Cap", "Total market value.", mc_str))
+            if pe:   val_rows.append(mrow("P/E Ratio", "Price / trailing earnings.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{pe:.1f}x</span>"))
+            if fwpe: val_rows.append(mrow("Forward P/E", "P/E on next 12m estimates.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fwpe:.1f}x</span>"))
+            if pb:   val_rows.append(mrow("P/B Ratio", "Price / book value.", az_tag(pb, 0, 3, "{:.2f}", "x")))
+            if ps:   val_rows.append(mrow("P/S Ratio", "Price / revenue.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{ps:.2f}x</span>"))
+            if beta: val_rows.append(mrow("Beta", "Volatility vs S&P 500.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{beta:.2f}</span>"))
+            if fl:
+                fl_str = f"{fl/1e9:.2f}B" if fl >= 1e9 else f"{fl/1e6:.0f}M"
+                val_rows.append(mrow("Float", "Tradeable shares.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
+            if val_rows:
+                st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
+
+            az_section("Financial Health")
+            hlth_rows = []
+            if pm:  hlth_rows.append(mrow("Profit Margin", "Net income / revenue.", az_tag(pm*100, 15, 5, "{:.1f}", "%")))
+            if om:  hlth_rows.append(mrow("Operating Margin", "EBIT / revenue.", az_tag(om*100, 15, 5, "{:.1f}", "%")))
+            if roe: hlth_rows.append(mrow("ROE", "Return on equity. 15%+ = strong.", az_tag(roe*100, 15, 8, "{:.1f}", "%")))
+            if roa: hlth_rows.append(mrow("ROA", "Return on assets. 5%+ = solid.", az_tag(roa*100, 8, 3, "{:.1f}", "%")))
+            if deq: hlth_rows.append(mrow("D/E Ratio", "Total debt / equity.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{deq:.1f}%</span>"))
+            if cr:  hlth_rows.append(mrow("Current Ratio", "Current assets / liabilities. 1.5+ = healthy.", az_tag(cr, 1.5, 1.0, "{:.2f}")))
+            if hlth_rows:
+                st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(hlth_rows)}</tbody></table>", unsafe_allow_html=True)
+
+            if am:
+                az_section("Analyst Consensus")
+                rcol  = "#4dd880" if "buy" in recky.lower() else ("#ff4444" if "sell" in recky.lower() else "#d0b040")
+                rdisp = recky.replace("_", " ").title() if recky else "--"
+                an_rows = [
+                    mrow("Recommendation", "Wall Street consensus.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#7a9ab8'>({nana} analysts)</span>"),
+                    mrow("Mean Target", "Average 12-month price target.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#ff4444'}'>({aus:+.1f}%)</span>" if aus else "")),
+                    mrow("Range", "Low to high analyst target.", f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
+                ]
+                st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(an_rows)}</tbody></table>", unsafe_allow_html=True)
+
 # Auto refresh
 # ----------------------------------------------------------------------------
 # Auto-refresh removed: scan runs on demand via Refresh button only.
