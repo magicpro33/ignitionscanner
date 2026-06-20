@@ -83,10 +83,21 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .metric-mono, .stDataFrame, code { font-family: 'Space Mono', monospace !important; }
 
 /* ── Streamlit widget overrides ───────────────────────────────────── */
-.stTabs [data-baseweb="tab-list"]  { background: #0d1e33; border-radius: 8px; gap: 2px; }
-.stTabs [data-baseweb="tab"]       { color: #b0c8e8; font-family: 'Rajdhani', sans-serif;
-                                      font-weight: 600; font-size: 15px; letter-spacing: 0.5px; }
-.stTabs [aria-selected="true"]     { color: #f5a623 !important; border-bottom: 2px solid #f5a623; }
+.stTabs [data-baseweb="tab-list"] {
+    background: #07111f; border-radius: 10px; gap: 4px;
+    padding: 4px; border: 1px solid #1e3a5f; }
+.stTabs [data-baseweb="tab"] {
+    color: #7a9ab8; font-family: 'Rajdhani', sans-serif;
+    font-weight: 700; font-size: 15px; letter-spacing: 1px;
+    text-transform: uppercase; border-radius: 8px;
+    padding: 8px 20px; border: 1px solid transparent;
+    transition: all 0.15s; }
+.stTabs [data-baseweb="tab"]:hover {
+    color: #f5a623; background: #0d1e33; border-color: #1e3a5f; }
+.stTabs [aria-selected="true"] {
+    color: #f5a623 !important; background: #0d1e33 !important;
+    border: 1px solid #f5a623 !important;
+    box-shadow: 0 0 10px rgba(245,166,35,0.2); }
 .stTabs [data-baseweb="tab-panel"] { background: transparent; }
 
 /* ── IGNITING banner ─────────────────────────────────────────────── */
@@ -2719,8 +2730,8 @@ with tab_lookup:
         "<div style='font-family:Rajdhani,sans-serif;font-size:20px;font-weight:700;"
         "color:#ffffff;letter-spacing:.6px;margin-bottom:4px'>Stock Lookup</div>"
         "<div style='font-family:Plus Jakarta Sans,sans-serif;font-size:13px;"
-        "color:#7a9ab8;margin-bottom:14px'>Enter any ticker or company name to run "
-        "the full ignition scan + stock analyzer on demand.</div>",
+        "color:#7a9ab8;margin-bottom:14px'>Enter any ticker symbol or company name. "
+        "Full ignition scan + stock analyzer — Alpaca → Yahoo → nightly dump.</div>",
         unsafe_allow_html=True,
     )
 
@@ -2728,29 +2739,24 @@ with tab_lookup:
     with lk_col1:
         lk_input = st.text_input(
             "Ticker or company name",
-            placeholder="e.g. NVDA  or  Nvidia",
+            placeholder="e.g.  NVDA   or   Nvidia Corp",
             label_visibility="collapsed",
         )
     with lk_col2:
         lk_run = st.button("Analyze ▶", type="primary", use_container_width=True)
 
-    # ── Resolve company name → ticker via yfinance search ────────────
     @st.cache_data(ttl=3600, show_spinner=False)
-    def resolve_ticker(query: str) -> tuple[str, str]:
-        """Return (ticker, company_name). If query looks like a ticker use it
-        directly; otherwise search yfinance for the best match."""
-        q = query.strip().upper()
-        # Looks like a ticker (1-5 uppercase letters, maybe with . or -)
+    def resolve_ticker(query: str):
         import re as _re
+        q = query.strip().upper()
         if _re.fullmatch(r"[A-Z]{1,5}([.\-][A-Z]{1,2})?", q):
             try:
                 info = yf.Ticker(q).info or {}
                 name = info.get("shortName") or info.get("longName") or q
-                if info.get("regularMarketPrice") or info.get("currentPrice"):
+                if info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose"):
                     return q, name
             except Exception:
                 pass
-        # Search by name
         try:
             results = yf.Search(query.strip(), max_results=5).quotes
             if results:
@@ -2768,123 +2774,28 @@ with tab_lookup:
         if lk_ticker:
             st.markdown(
                 f"<div style='font-family:Space Mono,monospace;font-size:12px;"
-                f"color:#7a9ab8;margin:4px 0 14px'>Analyzing "
-                f"<strong style='color:#f5a623'>{lk_ticker}</strong>"
-                f" — {lk_name}</div>",
+                f"color:#7a9ab8;margin:4px 0 12px'>Analyzing "
+                f"<strong style='color:#f5a623'>{lk_ticker}</strong> — {lk_name}</div>",
                 unsafe_allow_html=True,
             )
 
     if lk_ticker:
-        # ── Live ignition scan ────────────────────────────────────────
-        with st.spinner(f"Running ignition scan on {lk_ticker}…"):
-            lk_sig = compute_signals(lk_ticker)
+        # ── Step 1: Live ignition signals (Alpaca → Yahoo) ────────────
+        with st.spinner(f"Running live ignition scan on {lk_ticker}…"):
+            lk_sig  = compute_signals(lk_ticker)
             lk_fuel = fetch_fuel(lk_ticker)
             lk_sig["fuel"] = lk_fuel
 
-        # Header metrics row
-        sc   = lk_sig["score"]
-        gc   = "#ff2200" if sc >= 80 else ("#ff6600" if sc >= 65 else
-               "#f5a623" if sc >= 50 else ("#d0b040" if sc >= 35 else "#29b6c8"))
-        ign  = lk_sig.get("igniting", False)
-        grev = lk_sig.get("gap_reversal", False)
-        status = "🔥 IGNITING" if ign else ("↩ GAP REVERSAL" if grev else "")
-        status_col = "#f5a623" if ign else ("#29b6c8" if grev else "")
-
-        m1c, m2c, m3c, m4c, m5c = st.columns(5)
-        m1c.metric("Score",     f"{sc:.0f}")
-        m2c.metric("Ignition",  f"{lk_sig['ignition_score']:.0f}")
-        m3c.metric("Fuel",      f"{lk_sig['fuel_score']:.0f}")
-        m4c.metric("RVOL",      f"{lk_sig['rvol']:.1f}x" if lk_sig.get("rvol") else "--")
-        m5c.metric("Price",     f"${lk_sig['price']:.2f}" if lk_sig.get("price") else "--",
-                   delta=f"{lk_sig['chg_pct']:+.1f}%" if lk_sig.get("chg_pct") is not None else None)
-
-        if status:
-            st.markdown(
-                f"<div style='font-family:Rajdhani,sans-serif;font-size:16px;"
-                f"font-weight:700;color:{status_col};margin:4px 0 8px'>{status}</div>",
-                unsafe_allow_html=True,
-            )
-
-        # Arc gauge + signal pills
-        arc_len = 125.7
-        bar_w   = min(sc, 100)
-        dash_off = arc_len * (1 - bar_w / 100)
-        gid = f"lkarc{abs(hash(lk_ticker)) % 9999}"
-        arc_svg = (
-            f"<svg width='100' height='58' viewBox='0 0 90 50' fill='none'>"
-            f"<defs><linearGradient id='{gid}' x1='0%' y1='0%' x2='100%' y2='0%'>"
-            f"<stop offset='0%' stop-color='#29b6c8'/>"
-            f"<stop offset='30%' stop-color='#3ddc84'/>"
-            f"<stop offset='60%' stop-color='#f5a623'/>"
-            f"<stop offset='100%' stop-color='#ff2200'/>"
-            f"</linearGradient></defs>"
-            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='#122540' "
-            f"stroke-width='9' stroke-linecap='round' fill='none'/>"
-            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='url(#{gid})' "
-            f"stroke-width='9' stroke-linecap='round' fill='none' "
-            f"stroke-dasharray='{arc_len:.1f}' stroke-dashoffset='{dash_off:.1f}'/>"
-            f"<text x='45' y='43' text-anchor='middle' "
-            f"font-family='Space Mono,monospace' font-size='18' font-weight='700' "
-            f"fill='{gc}'>{sc:.0f}</text></svg>"
-        )
-
-        pill_html = ""
-        for reason in lk_sig.get("reasons", [])[:8]:
-            pill_html += (
-                f"<span style='display:inline-block;background:#0d1e33;color:#f5a623;"
-                f"border:1px solid #1e3a5f;border-radius:4px;font-family:Space Mono,monospace;"
-                f"font-size:11px;padding:2px 8px;margin:2px 3px 2px 0'>{reason}</span>"
-            )
-        cat_html = build_catalyst_tags_html(
-            lk_ticker,
-            lk_fuel.get("catalyst_tags") or [],
-            lk_fuel.get("bimodal_event", False),
-            lk_fuel.get("days_to_cover"),
-            lk_fuel.get("earnings_days"),
-        )
-        st.markdown(
-            f"<div style='display:flex;gap:16px;align-items:flex-start;margin:8px 0 14px'>"
-            f"<div>{arc_svg}</div>"
-            f"<div style='flex:1'>"
-            f"<div style='margin-bottom:6px'>{pill_html}</div>"
-            f"<div>{cat_html}</div>"
-            f"</div></div>",
-            unsafe_allow_html=True,
-        )
-
-        suppressed = lk_fuel.get("catalyst_suppressed") or []
-        if suppressed:
-            sup_html = " ".join(
-                f"<span style='font-family:Space Mono,monospace;font-size:10px;"
-                f"color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;"
-                f"padding:1px 6px;margin-right:4px;text-decoration:line-through;"
-                f"display:inline-block'>{s.upper()}</span>"
-                for s in suppressed
-            )
-            st.markdown(
-                f"<div style='margin-bottom:12px;font-family:Space Mono,monospace;"
-                f"font-size:10px;color:#4a6a8a'>filtered (sector: "
-                f"{lk_fuel.get('sector','unknown')}): {sup_html}</div>",
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<hr style='border-color:#1e3a5f;margin:12px 0'>", unsafe_allow_html=True)
-        st.markdown(
-            "<div style='font-family:Rajdhani,sans-serif;font-size:18px;font-weight:700;"
-            "color:#ffffff;letter-spacing:.5px;margin-bottom:10px'>Stock Analyzer</div>",
-            unsafe_allow_html=True,
-        )
-
-        # ── Full Stock Analyzer (reuses all module-level helpers) ─────
-        with st.spinner("Loading deep analysis…"):
+        # ── Step 2: Deep fundamentals (Alpaca history + Yahoo + dump) ─
+        with st.spinner("Loading fundamentals…"):
             lk_info, lk_hist = fetch_analyzer(lk_ticker)
 
-        # Parse fields — identical to the Scanner tab's analyzer block
+        # ── Parse all fields — identical to Scanner Stock Analyzer ─────
         px    = float(lk_info.get("currentPrice") or lk_info.get("regularMarketPrice") or
                       lk_info.get("previousClose") or lk_sig.get("price") or 0)
         name  = lk_info.get("shortName") or lk_info.get("longName") or lk_ticker
-        sec   = lk_info.get("sector") or ""
-        ind   = lk_info.get("industry") or ""
+        sec   = lk_info.get("sector")   or "Unknown"
+        ind   = lk_info.get("industry") or "Unknown"
         mcap  = lk_info.get("marketCap") or 0
         pe    = lk_info.get("trailingPE")
         fwpe  = lk_info.get("forwardPE")
@@ -2892,7 +2803,7 @@ with tab_lookup:
         ps    = lk_info.get("priceToSalesTrailing12Months")
         beta  = lk_info.get("beta")
         hi52  = lk_info.get("fiftyTwoWeekHigh") or 0
-        lo52  = lk_info.get("fiftyTwoWeekLow") or 0
+        lo52  = lk_info.get("fiftyTwoWeekLow")  or 0
         spf   = lk_info.get("shortPercentOfFloat")
         sratio= lk_info.get("shortRatio")
         am    = lk_info.get("targetMeanPrice")
@@ -2912,23 +2823,21 @@ with tab_lookup:
         aus   = ((am - px) / px * 100) if (am and px > 0) else None
         rng52 = ((px - lo52) / (hi52 - lo52) * 100) if (hi52 and lo52 and hi52 != lo52) else None
 
-        # Compute technicals from history
-        rsi_v = ma50_v = ma200_v = macd_v = macd_s = None
-        vol_avg = vol_td = atr = bb_upper = bb_mid = bb_lower = None
-        pct1d = pct5d = pct1m = pct3m = None
+        # ── Technicals from history ────────────────────────────────────
+        rsi_v = ma50_v = ma200_v = macd_v = macd_s = vol_avg = vol_td = None
+        pct1d = pct5d = pct1m = pct3m = atr = bb_upper = bb_mid = bb_lower = None
 
         if not lk_hist.empty and len(lk_hist) >= 26:
             cl = lk_hist["Close"].dropna()
-            vl = lk_hist["Volume"].dropna() if "Volume" in lk_hist else pd.Series(dtype=float)
+            vl = lk_hist["Volume"].dropna() if "Volume" in lk_hist.columns else pd.Series(dtype=float)
             try:
-                dlt = cl.diff(); g = dlt.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
-                ls  = (-dlt.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
-                rs  = (100 - (100 / (1 + g / ls.replace(0, np.nan)))).dropna()
-                rsi_v = float(rs.iloc[-1]) if not rs.empty else None
+                dlt = cl.diff(); g = dlt.clip(lower=0).rolling(14).mean()
+                ls  = (-dlt.clip(upper=0)).rolling(14).mean()
+                rs3 = (100 - (100 / (1 + g / ls.replace(0, np.nan)))).dropna()
+                rsi_v = float(rs3.iloc[-1]) if not rs3.empty else None
             except Exception: pass
             try:
-                e12 = cl.ewm(span=12, adjust=False).mean()
-                e26 = cl.ewm(span=26, adjust=False).mean()
+                e12 = cl.ewm(span=12, adjust=False).mean(); e26 = cl.ewm(span=26, adjust=False).mean()
                 ml  = e12 - e26; sl = ml.ewm(span=9, adjust=False).mean()
                 macd_v = float(ml.iloc[-1]); macd_s = float(sl.iloc[-1])
             except Exception: pass
@@ -2940,47 +2849,135 @@ with tab_lookup:
                 if len(vl) >= 20: vol_avg = float(vl.iloc[-20:].mean()); vol_td = float(vl.iloc[-1])
             except Exception: pass
             try:
-                if len(cl) >= 2:  pct1d = (float(cl.iloc[-1]) - float(cl.iloc[-2])) / float(cl.iloc[-2]) * 100
-                if len(cl) >= 6:  pct5d = (float(cl.iloc[-1]) - float(cl.iloc[-6])) / float(cl.iloc[-6]) * 100
+                if len(cl) >= 2:  pct1d = (float(cl.iloc[-1]) - float(cl.iloc[-2]))  / float(cl.iloc[-2])  * 100
+                if len(cl) >= 6:  pct5d = (float(cl.iloc[-1]) - float(cl.iloc[-6]))  / float(cl.iloc[-6])  * 100
                 if len(cl) >= 22: pct1m = (float(cl.iloc[-1]) - float(cl.iloc[-22])) / float(cl.iloc[-22]) * 100
                 if len(cl) >= 66: pct3m = (float(cl.iloc[-1]) - float(cl.iloc[-66])) / float(cl.iloc[-66]) * 100
             except Exception: pass
             try:
-                hi = lk_hist["High"].dropna(); lo2 = lk_hist["Low"].dropna()
-                tr = pd.concat([hi - lo2, (hi - cl.shift()).abs(), (lo2 - cl.shift()).abs()], axis=1).max(axis=1)
+                lhi = lk_hist["High"].dropna(); llo = lk_hist["Low"].dropna()
+                tr  = pd.concat([lhi - llo, (lhi - cl.shift()).abs(), (llo - cl.shift()).abs()], axis=1).max(axis=1)
                 atr = float(tr.rolling(14).mean().iloc[-1])
             except Exception: pass
             try:
                 if len(cl) >= 20:
                     bm = cl.rolling(20).mean(); bstd = cl.rolling(20).std()
-                    bb_mid = float(bm.iloc[-1]); bb_upper = float((bm + 2*bstd).iloc[-1])
-                    bb_lower = float((bm - 2*bstd).iloc[-1])
+                    bb_mid = float(bm.iloc[-1]); bb_upper = float((bm + 2*bstd).iloc[-1]); bb_lower = float((bm - 2*bstd).iloc[-1])
             except Exception: pass
 
-        # Data source badge
-        _ak_present = alpaca_keys() is not None
-        src_badge = (
-            "<span style='font-family:Space Mono,monospace;font-size:10px;color:#4dd880;"
-            "border:1px solid #1e6b35;border-radius:3px;padding:1px 7px'>Alpaca history</span>"
-        ) if (_ak_present and not lk_hist.empty) else (
-            "<span style='font-family:Space Mono,monospace;font-size:10px;color:#7a9ab8;"
-            "border:1px solid #1e3a5f;border-radius:3px;padding:1px 7px'>Yahoo history</span>"
+        # ── Ignition/Fuel from live scan ───────────────────────────────
+        ign_sc  = lk_sig.get("ignition_score")
+        fuel_sc = lk_sig.get("fuel_score")
+        rvol_v  = lk_sig.get("rvol")
+        reasons = lk_sig.get("reasons", [])
+        is_ign  = lk_sig.get("igniting", False)
+        is_grev = lk_sig.get("gap_reversal", False)
+
+        # ── Signal pills (same logic as Scanner Analyzer) ─────────────
+        pills_html = ""
+        if rsi_v is not None:
+            if rsi_v < 30:            pills_html += az_pill("RSI Oversold", True)
+            elif rsi_v > 70:          pills_html += az_pill("RSI Overbought", False)
+            elif 45 < rsi_v < 65:     pills_html += az_pill("RSI Sweet Spot", True)
+            else:                      pills_html += az_pill("RSI Neutral", None)
+        if macd_v is not None and macd_s is not None:
+            pills_html += az_pill("MACD Bullish" if macd_v > macd_s else "MACD Bearish", macd_v > macd_s)
+        if ma50_v and ma200_v:
+            pills_html += az_pill("Golden Cross" if ma50_v > ma200_v else "Death Cross", ma50_v > ma200_v)
+        if vol_avg and vol_td:
+            if vol_td > vol_avg * 1.5: pills_html += az_pill("High Volume", True)
+            elif vol_td < vol_avg * 0.5: pills_html += az_pill("Low Volume", None)
+        if spf and spf > 0.15:        pills_html += az_pill("High Short Interest", None)
+        if aus and aus > 15:           pills_html += az_pill(f"Analyst Upside {aus:.0f}%", True)
+        if is_ign:                     pills_html += az_pill("IGNITING NOW", True)
+        if is_grev:                    pills_html += az_pill("GAP REVERSAL", False)
+        if lk_sig.get("new_hod"):     pills_html += az_pill("New HOD", True)
+        if lk_sig.get("vwap_cross"):  pills_html += az_pill("VWAP Reclaim", True)
+
+        # ── Arc gauge ──────────────────────────────────────────────────
+        sc = lk_sig["score"]
+        gc = "#ff2200" if sc >= 80 else ("#ff6600" if sc >= 65 else "#f5a623" if sc >= 50 else "#d0b040" if sc >= 35 else "#29b6c8")
+        gid = f"lk{abs(hash(lk_ticker)) % 9999}"
+        arc_len = 125.7; dash_off = arc_len * (1 - min(sc, 100) / 100)
+        arc_svg = (
+            f"<svg width='100' height='58' viewBox='0 0 90 50' fill='none'>"
+            f"<defs><linearGradient id='{gid}' x1='0%' y1='0%' x2='100%' y2='0%'>"
+            f"<stop offset='0%' stop-color='#29b6c8'/><stop offset='30%' stop-color='#3ddc84'/>"
+            f"<stop offset='60%' stop-color='#f5a623'/><stop offset='100%' stop-color='#ff2200'/>"
+            f"</linearGradient></defs>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='#122540' stroke-width='9' stroke-linecap='round' fill='none'/>"
+            f"<path d='M5 45 A40 40 0 0 1 85 45' stroke='url(#{gid})' stroke-width='9' stroke-linecap='round' fill='none' "
+            f"stroke-dasharray='{arc_len:.1f}' stroke-dashoffset='{dash_off:.1f}'/>"
+            f"<text x='45' y='43' text-anchor='middle' font-family='Space Mono,monospace' font-size='18' font-weight='700' fill='{gc}'>{sc:.0f}</text>"
+            f"</svg>"
         )
-        if lk_info.get("_from_scan_dump"):
-            src_badge += (
-                " <span style='font-family:Space Mono,monospace;font-size:10px;color:#d0b040;"
-                "border:1px solid #907020;border-radius:3px;padding:1px 7px'>nightly dump fallback</span>"
-            )
+
+        # ── 6-column header metrics ────────────────────────────────────
+        hm1, hm2, hm3, hm4, hm5, hm6 = st.columns(6)
+        hm1.metric("Price",    f"${px:.2f}" if px else "--")
+        hm2.metric("Ignition", f"{ign_sc:.0f}" if ign_sc is not None else "--")
+        hm3.metric("Fuel",     f"{fuel_sc:.0f}" if fuel_sc is not None else "--")
+        hm4.metric("RVOL",     f"{rvol_v:.1f}x" if rvol_v else "--")
+        hm5.metric("52W Pos",  f"{rng52:.0f}%" if rng52 is not None else "--")
+        hm6.metric("Target",   f"${am:.2f}" if am else "--", delta=f"{aus:.1f}%" if aus else None)
 
         st.markdown(
-            f"<div style='margin:0 0 12px;font-family:Plus Jakarta Sans,sans-serif'>"
+            f"<div style='margin:6px 0 4px;font-family:Plus Jakarta Sans,sans-serif'>"
             f"<strong style='color:#ffffff'>{name}</strong>"
-            f"  <span style='color:#7a9ab8;font-size:13px'>{sec}{' / ' if sec and ind else ''}{ind}</span></div>"
-            f"<div style='margin-bottom:12px'>{src_badge}</div>",
+            f"  <span style='color:#7a9ab8;font-size:13px'>{sec} / {ind}</span></div>",
             unsafe_allow_html=True,
         )
 
-        # Three column layout — identical structure to Scanner tab analyzer
+        # Gauge + pills side by side
+        cat_html = build_catalyst_tags_html(
+            lk_ticker, lk_fuel.get("catalyst_tags") or [],
+            lk_fuel.get("bimodal_event", False),
+            lk_fuel.get("days_to_cover"), lk_fuel.get("earnings_days"),
+        )
+        if pills_html or cat_html:
+            st.markdown(
+                f"<div style='display:flex;gap:16px;align-items:flex-start;margin:8px 0 14px'>"
+                f"<div>{arc_svg}</div>"
+                f"<div style='flex:1'><div style='margin-bottom:6px'>{pills_html}</div>{cat_html}</div>"
+                f"</div>", unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(arc_svg, unsafe_allow_html=True)
+
+        # Suppressed catalysts
+        suppressed = lk_fuel.get("catalyst_suppressed") or []
+        if suppressed:
+            sup_html = " ".join(
+                f"<span style='font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a;"
+                f"border:1px dashed #1e3a5f;border-radius:4px;padding:1px 6px;margin-right:4px;"
+                f"text-decoration:line-through;display:inline-block'>{s.upper()}</span>"
+                for s in suppressed
+            )
+            st.markdown(
+                f"<div style='margin-bottom:12px;font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a'>"
+                f"filtered (sector: {lk_fuel.get('sector','unknown')}): {sup_html}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Data source badge
+        _ak_lk = alpaca_keys() is not None
+        src_parts = []
+        if _ak_lk and not lk_hist.empty:
+            src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#4dd880;border:1px solid #1e6b35;border-radius:3px;padding:1px 7px'>Alpaca history</span>")
+        else:
+            src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#7a9ab8;border:1px solid #1e3a5f;border-radius:3px;padding:1px 7px'>Yahoo history</span>")
+        if lk_info.get("_from_scan_dump"):
+            src_parts.append("<span style='font-family:Space Mono,monospace;font-size:10px;color:#d0b040;border:1px solid #907020;border-radius:3px;padding:1px 7px'>nightly dump fallback</span>")
+        st.markdown("<div style='margin:0 0 12px;display:flex;gap:6px;flex-wrap:wrap'>" + "".join(src_parts) + "</div>", unsafe_allow_html=True)
+
+        st.markdown("<hr style='border-color:#1e3a5f;margin:12px 0'>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-family:Rajdhani,sans-serif;font-size:18px;font-weight:700;"
+            "color:#ffffff;letter-spacing:.5px;margin-bottom:10px'>Stock Analyzer</div>",
+            unsafe_allow_html=True,
+        )
+
+        # ── Three column layout — exact match of Scanner Stock Analyzer ─
         lk_colA, lk_colB, lk_colC = st.columns(3)
 
         with lk_colA:
@@ -2991,13 +2988,11 @@ with tab_lookup:
                 bar_col = "#4dd880" if pct_pos > 0.7 else ("#d0b040" if pct_pos > 0.35 else "#ff4444")
                 st.markdown(
                     f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;margin-bottom:12px'>"
-                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
-                    f"<span>52W Low ${lo52:.2f}</span><span>52W High ${hi52:.2f}</span></div>"
+                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'><span>52W Low ${lo52:.2f}</span><span>52W High ${hi52:.2f}</span></div>"
                     f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
                     f"<div style='background:{bar_col};width:{bar_pct}%;height:100%;border-radius:4px'></div>"
-                    f"<div style='position:absolute;top:-16px;left:calc({bar_pct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bar_col}'>${px:.2f}</div></div>"
-                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
-                    f"Position: <strong style='color:{bar_col}'>{rng52:.1f}% of 52W range</strong></div>"
+                    f"<div style='position:absolute;top:-18px;left:calc({bar_pct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bar_col}'>${px:.2f}</div></div>"
+                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>Position: <strong style='color:{bar_col}'>{rng52:.1f}% of 52W range</strong></div>"
                     f"</div>", unsafe_allow_html=True,
                 )
             if bb_upper and bb_lower and bb_mid and px:
@@ -3005,77 +3000,73 @@ with tab_lookup:
                 bpos = max(0.0, min(1.0, (px - bb_lower) / bw)) if bw > 0 else 0.5
                 bpct = int(bpos * 100)
                 bcol = "#e05555" if bpos > 0.85 else ("#4dd880" if bpos < 0.15 else "#b0c8e8")
-                bb_lbl = "Near upper band (overbought)" if bpos > 0.85 else ("Near lower band (oversold)" if bpos < 0.15 else "Inside bands (neutral)")
+                bbl  = "Near upper band (overbought)" if bpos > 0.85 else ("Near lower band (oversold)" if bpos < 0.15 else "Inside bands (neutral)")
                 st.markdown(
                     f"<div style='background:#0d1e33;border:1px solid #1e3a5f;border-radius:8px;padding:14px 16px;margin-bottom:12px'>"
-                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'>"
-                    f"<span>BB Lower ${bb_lower:.2f}</span><span>BB Upper ${bb_upper:.2f}</span></div>"
+                    f"<div style='display:flex;justify-content:space-between;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;margin-bottom:6px'><span>BB Lower ${bb_lower:.2f}</span><span>BB Upper ${bb_upper:.2f}</span></div>"
                     f"<div style='background:#122540;border-radius:4px;height:8px;position:relative;overflow:visible'>"
                     f"<div style='position:absolute;left:50%;width:1px;height:100%;background:#1e3a5f'></div>"
                     f"<div style='background:{bcol};width:{bpct}%;height:100%;border-radius:4px'></div>"
-                    f"<div style='position:absolute;top:-16px;left:calc({bpct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bcol}'>${px:.2f}</div></div>"
-                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>"
-                    f"Bollinger: <strong style='color:{bcol}'>{bb_lbl}</strong></div>"
+                    f"<div style='position:absolute;top:-18px;left:calc({bpct}% - 1px);font-family:Space Mono,monospace;font-size:10px;color:{bcol}'>${px:.2f}</div></div>"
+                    f"<div style='margin-top:10px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>Bollinger: <strong style='color:{bcol}'>{bbl}</strong></div>"
                     f"<div style='margin-top:4px;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8'>Mid (20MA): ${bb_mid:.2f} · Width: ${bw:.2f}</div>"
                     f"</div>", unsafe_allow_html=True,
                 )
             az_section("Price Performance")
-            perf_rows = [
-                mrow("1 Day", "Daily change vs yesterday's close.", pct_color(pct1d)),
-                mrow("5 Day", "Five trading days.", pct_color(pct5d)),
-                mrow("1 Month", "~22 trading days.", pct_color(pct1m)),
-                mrow("3 Month", "~66 trading days (one quarter).", pct_color(pct3m)),
-            ]
-            st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(perf_rows)}</tbody></table>", unsafe_allow_html=True)
+            st.markdown(
+                f"<table style='width:100%;border-collapse:collapse'><tbody>"
+                f"{''.join([mrow('1 Day','Daily change.',pct_color(pct1d)),mrow('5 Day','Five trading days.',pct_color(pct5d)),mrow('1 Month','~22 trading days.',pct_color(pct1m)),mrow('3 Month','~66 trading days.',pct_color(pct3m))])}"
+                f"</tbody></table>", unsafe_allow_html=True,
+            )
 
         with lk_colB:
             az_section("Technical Signals")
             tech_rows = []
             if rsi_v is not None:
-                ri, rc = (("Oversold", "#4dd880") if rsi_v < 30 else ("Weak", "#ff4444") if rsi_v < 45 else
-                          ("Neutral", "#b0c8e8") if rsi_v < 55 else ("Strong", "#4dd880") if rsi_v < 70 else ("Overbought", "#ff4444"))
-                tech_rows.append(mrow("RSI (14d)", "RSI 0-100. Below 30 = oversold. Above 70 = overbought. 45-70 = sweet spot.", f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#7a9ab8'>{ri}</span>"))
+                ri,rc = (("Oversold","#4dd880") if rsi_v<30 else ("Weak","#ff4444") if rsi_v<45 else ("Neutral","#b0c8e8") if rsi_v<55 else ("Strong","#4dd880") if rsi_v<70 else ("Overbought","#ff4444"))
+                tech_rows.append(mrow("RSI (14d)","RSI 0-100. 45-70 = sweet spot.",f"<span style='color:{rc};font-family:Space Mono,monospace'>{rsi_v:.1f}</span> <span style='font-size:11px;color:#7a9ab8'>{ri}</span>"))
             if macd_v is not None and macd_s is not None:
                 mc2 = "#4dd880" if macd_v > macd_s else "#ff4444"
-                mi  = "Bullish — buyers in control" if macd_v > macd_s else "Bearish — sellers in control"
-                tech_rows.append(mrow("MACD", "MACD line above signal = buyers in control.", f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#7a9ab8'>{mi}</span>"))
+                tech_rows.append(mrow("MACD","Above signal = buyers in control.",f"<span style='color:{mc2};font-family:Space Mono,monospace'>{macd_v:.4f}</span> <span style='font-size:11px;color:#7a9ab8'>{'Bullish' if macd_v>macd_s else 'Bearish'}</span>"))
             if ma50_v and px:
                 pvs = (px - ma50_v) / ma50_v * 100
-                m5c2 = "#4dd880" if 0 < pvs < 5 else ("#d0b040" if pvs >= 5 else ("#d0b040" if pvs > -5 else "#ff4444"))
-                tech_rows.append(mrow("50-Day MA", "Short-term trend anchor.", f"${ma50_v:.2f} <span style='color:{m5c2};font-size:11px'>({pvs:+.1f}%)</span>"))
+                m5c2 = "#4dd880" if 0<pvs<5 else ("#d0b040" if pvs>=5 else ("#d0b040" if pvs>-5 else "#ff4444"))
+                tech_rows.append(mrow("50-Day MA","Short-term trend anchor.",f"${ma50_v:.2f} <span style='color:{m5c2};font-size:11px'>({pvs:+.1f}%)</span>"))
             if ma200_v:
-                m2c2 = "#4dd880" if (ma50_v and ma50_v > ma200_v) else "#ff4444"
-                m2i  = "Golden Cross ↑" if (ma50_v and ma50_v > ma200_v) else "Death Cross ↓"
-                tech_rows.append(mrow("200-Day MA", "Long-term trend line.", f"${ma200_v:.2f} <span style='font-size:11px;color:{m2c2}'>{m2i}</span>"))
+                m2c2 = "#4dd880" if (ma50_v and ma50_v>ma200_v) else "#ff4444"
+                tech_rows.append(mrow("200-Day MA","Long-term trend.",f"${ma200_v:.2f} <span style='font-size:11px;color:{m2c2}'>{'Golden Cross ↑' if (ma50_v and ma50_v>ma200_v) else 'Death Cross ↓'}</span>"))
             if vol_avg and vol_td:
-                vr  = vol_td / vol_avg
-                vc  = "#4dd880" if vr > 1.5 else ("#b0c8e8" if vr > 0.5 else "#d0b040")
-                vi  = "Very high" if vr > 2 else ("High" if vr > 1.5 else ("Normal" if vr > 0.5 else "Low"))
-                tech_rows.append(mrow("Volume", "Today vs 20-day average.", f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#7a9ab8'>{vi}</span>"))
+                vr = vol_td/vol_avg
+                vc = "#4dd880" if vr>1.5 else ("#b0c8e8" if vr>0.5 else "#d0b040")
+                tech_rows.append(mrow("Volume","Today vs 20-day avg.",f"<span style='color:{vc};font-family:Space Mono,monospace'>{vr:.2f}x avg</span> <span style='font-size:11px;color:#7a9ab8'>{'High' if vr>1.5 else 'Normal' if vr>0.5 else 'Low'}</span>"))
             if atr and px:
-                tech_rows.append(mrow("ATR (14d)", "Average daily range in dollars. Use for stop sizing.", f"${atr:.2f} <span style='color:#7a9ab8;font-size:11px'>({atr/px*100:.1f}% of price)</span>"))
+                tech_rows.append(mrow("ATR (14d)","Avg daily range. Use for stop sizing.",f"${atr:.2f} <span style='color:#7a9ab8;font-size:11px'>({atr/px*100:.1f}% of price)</span>"))
+            if ign_sc is not None:
+                ic = "#f5a623" if ign_sc>=70 else ("#d0b040" if ign_sc>=50 else "#4a6a8a")
+                tech_rows.append(mrow("Ignition Score","Live momentum score (0-100).",f"<span style='color:{ic};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{ign_sc:.0f}</span>"))
             if tech_rows:
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(tech_rows)}</tbody></table>", unsafe_allow_html=True)
 
             az_section("Short Interest & Growth")
             si_rows = []
-            if spf: si_rows.append(mrow("Short % Float", "% of float sold short. 15%+ = squeeze setup.", az_tag(spf*100, 20, 10, "{:.1f}", "%")))
-            if sratio: si_rows.append(mrow("Days to Cover", "Shares short / avg volume.", az_tag(sratio, 5, 3, "{:.1f}", "d")))
-            if rg: si_rows.append(mrow("Revenue Growth", "YoY revenue change.", az_tag(rg*100, 10, 3, "{:.1f}", "%")))
-            if eg: si_rows.append(mrow("Earnings Growth", "YoY EPS change.", az_tag(eg*100, 10, 3, "{:.1f}", "%")))
+            if spf:    si_rows.append(mrow("Short % Float","% of float sold short. 15%+ = squeeze setup.",az_tag(spf*100,20,10,"{:.1f}","%")))
+            if sratio: si_rows.append(mrow("Days to Cover","Shares short / avg volume.",az_tag(sratio,5,3,"{:.1f}","d")))
+            if rg:     si_rows.append(mrow("Revenue Growth","YoY revenue change.",az_tag(rg*100,10,3,"{:.1f}","%")))
+            if eg:     si_rows.append(mrow("Earnings Growth","YoY EPS change.",az_tag(eg*100,10,3,"{:.1f}","%")))
+            if fuel_sc is not None:
+                fc = "#4dd880" if fuel_sc>=70 else ("#d0b040" if fuel_sc>=50 else "#4a6a8a")
+                si_rows.append(mrow("Fuel Score","Primed-to-move score (0-100).",f"<span style='color:{fc};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{fuel_sc:.0f}</span>"))
             if si_rows:
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(si_rows)}</tbody></table>", unsafe_allow_html=True)
 
             az_section("Live Signals")
-            reasons = lk_sig.get("reasons", [])
             if reasons:
-                sig_html = "".join(
+                st.markdown("".join(
                     f"<span style='display:inline-block;background:#0d1e33;color:#f5a623;"
                     f"border:1px solid #1e3a5f;border-radius:4px;font-family:Space Mono,monospace;"
                     f"font-size:11px;padding:2px 8px;margin:2px 3px 2px 0'>{r}</span>"
                     for r in reasons
-                )
-                st.markdown(sig_html, unsafe_allow_html=True)
+                ), unsafe_allow_html=True)
             else:
                 st.caption("No active live signals.")
 
@@ -3083,40 +3074,56 @@ with tab_lookup:
             az_section("Valuation")
             val_rows = []
             if mcap:
-                mc_str = f"${mcap/1e9:.2f}B" if mcap >= 1e9 else f"${mcap/1e6:.1f}M"
-                val_rows.append(mrow("Market Cap", "Total market value.", mc_str))
-            if pe:   val_rows.append(mrow("P/E Ratio", "Price / trailing earnings.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{pe:.1f}x</span>"))
-            if fwpe: val_rows.append(mrow("Forward P/E", "P/E on next 12m estimates.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fwpe:.1f}x</span>"))
-            if pb:   val_rows.append(mrow("P/B Ratio", "Price / book value.", az_tag(pb, 0, 3, "{:.2f}", "x")))
-            if ps:   val_rows.append(mrow("P/S Ratio", "Price / revenue.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{ps:.2f}x</span>"))
-            if beta: val_rows.append(mrow("Beta", "Volatility vs S&P 500.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{beta:.2f}</span>"))
+                mc_str = f"${mcap/1e9:.2f}B" if mcap>=1e9 else f"${mcap/1e6:.1f}M"
+                val_rows.append(mrow("Market Cap","Total market value.",mc_str))
+            if pe:   val_rows.append(mrow("P/E Ratio","Price / trailing earnings.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{pe:.1f}x</span>" if pe<200 else f"<span style='font-family:Space Mono,monospace;color:#d0b040'>{pe:.1f}x</span>"))
+            if fwpe: val_rows.append(mrow("Forward P/E","P/E on next 12m estimates.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fwpe:.1f}x</span>"))
+            if pb:   val_rows.append(mrow("P/B Ratio","Price / book value.",az_tag(pb,0,3,"{:.2f}","x")))
+            if ps:   val_rows.append(mrow("P/S Ratio","Price / revenue.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{ps:.2f}x</span>"))
+            if beta: val_rows.append(mrow("Beta","Volatility vs S&P 500.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{beta:.2f}</span>"))
             if fl:
-                fl_str = f"{fl/1e9:.2f}B" if fl >= 1e9 else f"{fl/1e6:.0f}M"
-                val_rows.append(mrow("Float", "Tradeable shares.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
+                fl_str = f"{fl/1e9:.2f}B" if fl>=1e9 else f"{fl/1e6:.0f}M"
+                val_rows.append(mrow("Float","Tradeable shares.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
             if val_rows:
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
 
             az_section("Financial Health")
             hlth_rows = []
-            if pm:  hlth_rows.append(mrow("Profit Margin", "Net income / revenue.", az_tag(pm*100, 15, 5, "{:.1f}", "%")))
-            if om:  hlth_rows.append(mrow("Operating Margin", "EBIT / revenue.", az_tag(om*100, 15, 5, "{:.1f}", "%")))
-            if roe: hlth_rows.append(mrow("ROE", "Return on equity. 15%+ = strong.", az_tag(roe*100, 15, 8, "{:.1f}", "%")))
-            if roa: hlth_rows.append(mrow("ROA", "Return on assets. 5%+ = solid.", az_tag(roa*100, 8, 3, "{:.1f}", "%")))
-            if deq: hlth_rows.append(mrow("D/E Ratio", "Total debt / equity.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{deq:.1f}%</span>"))
-            if cr:  hlth_rows.append(mrow("Current Ratio", "Current assets / liabilities. 1.5+ = healthy.", az_tag(cr, 1.5, 1.0, "{:.2f}")))
+            if pm:  hlth_rows.append(mrow("Profit Margin","Net income / revenue.",az_tag(pm*100,15,5,"{:.1f}","%")))
+            if om:  hlth_rows.append(mrow("Operating Margin","EBIT / revenue.",az_tag(om*100,15,5,"{:.1f}","%")))
+            if roe: hlth_rows.append(mrow("ROE","Return on equity. 15%+ = strong.",az_tag(roe*100,15,8,"{:.1f}","%")))
+            if roa: hlth_rows.append(mrow("ROA","Return on assets. 5%+ = solid.",az_tag(roa*100,8,3,"{:.1f}","%")))
+            if deq: hlth_rows.append(mrow("D/E Ratio","Total debt / equity.",f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{deq:.1f}%</span>"))
+            if cr:  hlth_rows.append(mrow("Current Ratio","Current assets / liabilities.",az_tag(cr,1.5,1.0,"{:.2f}")))
             if hlth_rows:
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(hlth_rows)}</tbody></table>", unsafe_allow_html=True)
 
             if am:
                 az_section("Analyst Consensus")
                 rcol  = "#4dd880" if "buy" in recky.lower() else ("#ff4444" if "sell" in recky.lower() else "#d0b040")
-                rdisp = recky.replace("_", " ").title() if recky else "--"
+                rdisp = recky.replace("_"," ").title() if recky else "--"
                 an_rows = [
-                    mrow("Recommendation", "Wall Street consensus.", f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#7a9ab8'>({nana} analysts)</span>"),
-                    mrow("Mean Target", "Average 12-month price target.", f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus > 0 else '#ff4444'}'>({aus:+.1f}%)</span>" if aus else "")),
-                    mrow("Range", "Low to high analyst target.", f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
+                    mrow("Recommendation","Wall Street consensus.",f"<span style='color:{rcol};font-weight:500'>{rdisp}</span> <span style='font-size:11px;color:#7a9ab8'>({nana} analysts)</span>"),
+                    mrow("Mean Target","Average 12-month target.",f"${am:.2f}" + (f" <span style='font-size:11px;color:{'#4dd880' if aus and aus>0 else '#ff4444'}'>({aus:+.1f}%)</span>" if aus else "")),
+                    mrow("Target Range","Low to high analyst target.",f"${al:.2f} – ${ahigh:.2f}" if (al and ahigh) else "--"),
                 ]
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(an_rows)}</tbody></table>", unsafe_allow_html=True)
+
+            # Catalysts from scan
+            if lk_fuel.get("catalyst_tags") or lk_fuel.get("bimodal_event") or (lk_fuel.get("days_to_cover") and lk_fuel["days_to_cover"] >= 5):
+                az_section("Catalysts Detected")
+                full_cat = build_catalyst_tags_html(
+                    lk_ticker, lk_fuel.get("catalyst_tags") or [],
+                    lk_fuel.get("bimodal_event", False),
+                    lk_fuel.get("days_to_cover"), lk_fuel.get("earnings_days"),
+                )
+                if suppressed:
+                    for s in suppressed:
+                        full_cat += f"<span style='font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a;border:1px dashed #1e3a5f;border-radius:4px;padding:1px 6px;margin:2px 3px 2px 0;text-decoration:line-through;display:inline-block'>{s.upper()}</span>"
+                if lk_fuel.get("latest_headline"):
+                    full_cat += f"<div style='margin-top:8px;font-size:11px;color:#7a9ab8'>{lk_fuel['latest_headline']}</div>"
+                st.markdown(full_cat, unsafe_allow_html=True)
+
 
 # Auto refresh
 # ----------------------------------------------------------------------------
