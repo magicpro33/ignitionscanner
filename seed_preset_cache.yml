@@ -1,0 +1,52 @@
+name: Seed Preset Fuel Cache
+
+on:
+  schedule:
+    # Run at 6:00 AM ET (11:00 UTC) on weekdays — after pre-market opens,
+    # before US market opens.  Fresh news + earnings dates are available.
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch:   # allow manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write      # needed to commit the output file back to the repo
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas requests numpy
+
+      - name: Run seed script
+        run: |
+          python seed/seed_cache.py
+        env:
+          # No API keys needed — seed script uses yfinance only.
+          # If you add Alpaca support later, add secrets here.
+          PYTHONUNBUFFERED: '1'
+
+      - name: Commit and push cache file
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/preset_fuel_cache.json.gz
+          # Only commit if the file actually changed
+          if git diff --staged --quiet; then
+            echo "No changes to cache file — skipping commit."
+          else
+            git commit -m "chore: update preset fuel cache [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+            git push
+          fi
