@@ -27,6 +27,7 @@ Run:  streamlit run ignition_scanner.py
 Data: Yahoo Finance via yfinance (free, ~15 min delayed on some feeds).
 """
 
+import os
 import time
 import random
 import math
@@ -710,45 +711,250 @@ SCREENER_URL_DEFAULT = (
 PRESET_FUEL_CACHE_URL = (
     "https://raw.githubusercontent.com/magicpro33/ignitionscanner/main/data/preset_fuel_cache.json.gz"
 )
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_FUEL_CACHE_DIR = os.path.join(_APP_DIR, "data")
+GITHUB_FUEL_SNAPSHOT_PATH = os.path.join(_FUEL_CACHE_DIR, "preset_fuel_cache.github.json.gz")
+LOCAL_FUEL_CACHE_PATH = os.path.join(_FUEL_CACHE_DIR, "preset_fuel_cache.local.json.gz")
+
+_FUEL_SEED_FIELDS = (
+    "short_pct_float", "float_shares", "days_to_cover", "inst_pct",
+    "high_52w", "name", "sector", "target_mean",
+    "insider_buys", "insider_sells", "insider_net_buy_usd",
+    "news_count_48h", "news_sentiment", "latest_headline",
+    "earnings_days", "catalyst_tags", "catalyst_suppressed",
+    "catalyst_score", "bimodal_event",
+)
+
+
+def _parse_fuel_cache_payload(data: dict) -> dict:
+    fuel_map = data.get("fuel", {})
+    return {k.upper(): v for k, v in fuel_map.items()}
+
+
+def _read_fuel_cache_file(path: str):
+    if not os.path.isfile(path):
+        return None
+    try:
+        with gzip.open(path, "rb") as f:
+            data = json.loads(f.read().decode("utf-8"))
+        fuel_map = _parse_fuel_cache_payload(data)
+        meta = {
+            "generated_at": data.get("generated_at"),
+            "source": data.get("source", os.path.basename(path)),
+            "ticker_count": len(fuel_map),
+            "path": path,
+        }
+        return fuel_map, meta
+    except Exception:
+        return None
+
+
+def _write_fuel_cache_file(path: str, fuel_map: dict, source: str, generated_at=None):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = {
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
+        "source": source,
+        "fuel": fuel_map,
+    }
+    raw = json.dumps(payload, default=str).encode("utf-8")
+    with gzip.open(path, "wb", compresslevel=6) as f:
+        f.write(raw)
+
+
+def _probe_github_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
+    """Lightweight check whether the nightly GitHub cache file exists."""
+    meta = {"github_url": url, "github_found": False, "github_status": None, "github_error": None}
+    try:
+        resp = requests.head(url, timeout=10, allow_redirects=True)
+        meta["github_status"] = resp.status_code
+        meta["github_found"] = resp.status_code == 200
+        if resp.status_code == 404:
+            meta["github_error"] = "File not found on GitHub (404)"
+    except Exception as exc:
+        meta["github_error"] = str(exc)
+    return meta
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_preset_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
-    """Download and parse the nightly pre-seeded fuel cache.
-
-    Returns a dict:  { ticker_upper: fuel_dict }
-    Returns {}       if the file is missing or fails to parse (safe fallback).
-    The TTL is 1 hour so it auto-refreshes during the day without a restart.
-    """
+def _download_github_fuel_cache(url: str = PRESET_FUEL_CACHE_URL):
+    """Download the nightly GitHub fuel cache and save a local snapshot."""
+    meta = _probe_github_fuel_cache(url)
+    meta["loaded_source"] = "none"
     try:
-        resp = requests.get(url, timeout=20, stream=True)
+        resp = requests.get(url, timeout=25)
         if resp.status_code == 404:
-            return {}   # file not yet committed — first-run silent fallback
+            meta["github_error"] = meta.get("github_error") or "File not found on GitHub (404)"
+            return {}, meta
         resp.raise_for_status()
+        meta["github_found"] = True
+        meta["github_status"] = resp.status_code
         raw = gzip.decompress(resp.content)
         data = json.loads(raw.decode("utf-8"))
-        fuel_map = data.get("fuel", {})
-        # Normalise: return { "TICKER": fuel_dict } with uppercase keys
-        return {k.upper(): v for k, v in fuel_map.items()}
+        fuel_map = _parse_fuel_cache_payload(data)
+        meta["generated_at"] = data.get("generated_at")
+        meta["github_generated_at"] = data.get("generated_at")
+        meta["ticker_count"] = len(fuel_map)
+        meta["loaded_source"] = "github"
+        _write_fuel_cache_file(
+            GITHUB_FUEL_SNAPSHOT_PATH,
+            fuel_map,
+            source="github_nightly",
+            generated_at=data.get("generated_at"),
+        )
+        return fuel_map, meta
+    except Exception as exc:
+        meta["github_error"] = str(exc)
+        return {}, meta
+
+
+def _cache_generated_ts(meta):
+    if not meta:
+        return None
+    raw = meta.get("generated_at") or meta.get("github_generated_at")
+    if not raw:
+        return None
+    try:
+        return pd.to_datetime(raw, utc=True).to_pydatetime()
     except Exception:
-        return {}   # always safe — app falls back to live yfinance
+        return None
 
 
-def _seed_fuel_to_cache(fuel_map: dict) -> None:
-    """Merge the pre-seeded fuel map into fetch_fuel's Streamlit cache.
+def initialize_preset_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
+    """Load the best available preset fuel cache once per session.
 
-    We call fetch_fuel.clear() is NOT what we want — that would lose live data.
-    Instead we pre-populate session_state so the first render of each preset
-    can use seeded data, and live scans overwrite it as they complete.
-
-    The seeded fuel dict keys match exactly what fetch_fuel returns, so
-    the app treats them identically.
+    Priority:
+      1. Local temp cache (written by Refresh scan with live yfinance data)
+      2. On-disk GitHub snapshot (fast restart without re-download)
+      3. Fresh GitHub download (nightly Actions cache)
     """
+    github_probe = _probe_github_fuel_cache(url)
+    local_bundle = _read_fuel_cache_file(LOCAL_FUEL_CACHE_PATH)
+    github_bundle = _read_fuel_cache_file(GITHUB_FUEL_SNAPSHOT_PATH)
+
+    fuel_map: dict = {}
+    meta = {
+        **github_probe,
+        "loaded_source": "none",
+        "ticker_count": 0,
+        "github_ticker_count": 0,
+        "generated_at": None,
+        "local_updated_at": None,
+        "github_generated_at": None,
+        "github_snapshot_path": GITHUB_FUEL_SNAPSHOT_PATH,
+        "local_cache_path": LOCAL_FUEL_CACHE_PATH,
+    }
+
+    candidates: list[tuple[str, dict, dict]] = []
+    if local_bundle:
+        _fuel, _meta = local_bundle
+        candidates.append(("local_refresh", _fuel, _meta))
+        meta["local_updated_at"] = _meta.get("generated_at")
+    if github_bundle:
+        _fuel, _meta = github_bundle
+        candidates.append(("github_snapshot", _fuel, _meta))
+        meta["github_generated_at"] = _meta.get("generated_at")
+        meta["github_ticker_count"] = _meta.get("ticker_count", len(_fuel))
+        if meta["github_ticker_count"] > 0:
+            meta["github_found"] = True
+
+    if candidates:
+        source, fuel_map, chosen = max(
+            candidates,
+            key=lambda item: _cache_generated_ts(item[2]) or datetime.min.replace(tzinfo=timezone.utc),
+        )
+        meta["loaded_source"] = source
+        meta["generated_at"] = chosen.get("generated_at")
+        meta["ticker_count"] = len(fuel_map)
+        if not meta.get("github_found") and source.startswith("github"):
+            meta["github_found"] = len(fuel_map) > 0
+
     if not fuel_map:
+        fuel_map, dl_meta = _download_github_fuel_cache(url)
+        meta.update({k: v for k, v in dl_meta.items() if v is not None})
+        meta["ticker_count"] = len(fuel_map)
+        if fuel_map:
+            meta["loaded_source"] = "github"
+            meta["generated_at"] = dl_meta.get("generated_at")
+            meta["github_generated_at"] = dl_meta.get("generated_at")
+            meta["github_ticker_count"] = len(fuel_map)
+            meta["github_found"] = True
+
+    return {"fuel": fuel_map, "meta": meta}
+
+
+def _seed_fuel_to_session(fuel_map: dict, meta: dict) -> None:
+    if "_fuel_cache_initialized" in st.session_state:
         return
-    if "_seed_fuel_loaded" not in st.session_state:
-        st.session_state["_seed_fuel"] = fuel_map
-        st.session_state["_seed_fuel_loaded"] = True
+    st.session_state["_seed_fuel"] = fuel_map or {}
+    st.session_state["_fuel_cache_meta"] = meta or {}
+    st.session_state["_fuel_cache_initialized"] = True
+
+
+def _apply_seed_fuel(out: dict, ticker: str) -> bool:
+    """Fill fuel dict from the preset cache. Returns True if seed data was used."""
+    _seed = st.session_state.get("_seed_fuel", {})
+    _sf = _seed.get(ticker.upper())
+    if not _sf:
+        return False
+    for _k in _FUEL_SEED_FIELDS:
+        val = _sf.get(_k)
+        if val is not None and val != "" and val != []:
+            out[_k] = val
+    return True
+
+
+def _persist_live_fuel_cache(results: list) -> None:
+    """Merge live fuel from a refresh scan into the session seed and temp file."""
+    seed = dict(st.session_state.get("_seed_fuel", {}))
+    for row in results:
+        fuel = row.get("fuel")
+        if not fuel:
+            continue
+        seed[row["ticker"].upper()] = {**seed.get(row["ticker"].upper(), {}), **fuel}
+    if not seed:
+        return
+    now_iso = datetime.now(timezone.utc).isoformat()
+    st.session_state["_seed_fuel"] = seed
+    _write_fuel_cache_file(LOCAL_FUEL_CACHE_PATH, seed, source="live_refresh", generated_at=now_iso)
+    meta = dict(st.session_state.get("_fuel_cache_meta", {}))
+    meta.update({
+        "loaded_source": "local_refresh",
+        "local_updated_at": now_iso,
+        "generated_at": now_iso,
+        "ticker_count": len(seed),
+    })
+    st.session_state["_fuel_cache_meta"] = meta
+
+
+def _render_fuel_cache_sidebar() -> None:
+    meta = st.session_state.get("_fuel_cache_meta", {})
+    with st.sidebar.expander("Preset fuel cache", expanded=False):
+        if meta.get("github_found"):
+            gh_at = meta.get("github_generated_at") or "unknown time"
+            gh_n = meta.get("github_ticker_count") or 0
+            st.success(f"GitHub nightly cache: found ({gh_n} tickers)")
+            st.caption(f"GitHub generated: {gh_at}")
+        else:
+            st.warning("GitHub nightly cache: not found")
+            if meta.get("github_error"):
+                st.caption(meta["github_error"])
+            elif meta.get("github_status"):
+                st.caption(f"HTTP {meta['github_status']}")
+
+        loaded = meta.get("loaded_source", "none")
+        if loaded == "local_refresh":
+            st.info("Active data: local refresh cache (fast preset loads)")
+            if meta.get("local_updated_at"):
+                st.caption(f"Last refresh saved: {meta['local_updated_at']}")
+        elif loaded in ("github", "github_snapshot"):
+            st.info("Active data: GitHub nightly cache (fast preset loads)")
+        elif loaded == "none":
+            st.error("No preset fuel cache loaded — fuel will fetch live (slower).")
+
+        st.caption(
+            "Preset scans use cached fuel for speed. "
+            "▶ Refresh scan downloads live fuel + intraday and updates the local cache."
+        )
 
 
 
@@ -941,15 +1147,14 @@ def sector_allows(catalyst: str, sector: str) -> bool:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_fuel(ticker: str) -> dict:
+def fetch_fuel(ticker: str, live: bool = False) -> dict:
     """Slow-moving 'primed to move' data: short interest, float,
     insider transactions, news, 52-week levels, earnings date,
     sector, institutional ownership, and full catalyst detection.
 
     Data priority:
-      1. Pre-seeded fuel cache (GitHub Actions nightly, loaded on startup)
-      2. Live yfinance call (always runs to get fresh news + override stale seed)
-      The seed provides instant data; the live call refreshes it.
+      1. Pre-seeded fuel cache (GitHub nightly or local refresh) when live=False
+      2. Live yfinance call when live=True (Refresh scan) or seed is missing
     """
     out = {
         # existing
@@ -969,20 +1174,14 @@ def fetch_fuel(ticker: str) -> dict:
         "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
     }
 
-    # ── Tier 1: Pre-seeded fuel cache ────────────────────────────────
-    # Instantly fills stable fields (sector, float, targets, short data).
-    # Live yfinance call below will override with fresher values where possible.
-    _seed = st.session_state.get("_seed_fuel", {})
-    if ticker.upper() in _seed:
-        _sf = _seed[ticker.upper()]
-        for _k in ["short_pct_float", "float_shares", "days_to_cover",
-                   "inst_pct", "high_52w", "name", "sector", "target_mean",
-                   "insider_buys", "insider_sells", "insider_net_buy_usd",
-                   "earnings_days", "catalyst_tags", "catalyst_suppressed",
-                   "catalyst_score", "bimodal_event"]:
-            if _sf.get(_k) is not None and _sf[_k] != "" and _sf[_k] != []:
-                out[_k] = _sf[_k]
-    # ── Tier 2: Live yfinance (always runs, overrides stale seed) ────
+    # ── Fast path: preset fuel cache (no yfinance) ────────────────────
+    if not live and _apply_seed_fuel(out, ticker):
+        return out
+
+    # ── Tier 1: seed baseline before live overrides ──────────────────
+    _apply_seed_fuel(out, ticker)
+
+    # ── Tier 2: Live yfinance ────────────────────────────────────────
     try:
         tk = yf.Ticker(ticker)
         info = {}
@@ -1182,7 +1381,7 @@ def fetch_fuel(ticker: str) -> dict:
 # ----------------------------------------------------------------------------
 # Signal engine
 # ----------------------------------------------------------------------------
-def compute_signals(ticker: str) -> dict:
+def compute_signals(ticker: str, fuel_live: bool = False) -> dict:
     """Returns a dict of raw signals, sub-scores and the composite score."""
     s = {
         "ticker": ticker, "price": None, "chg_pct": None,
@@ -1196,7 +1395,7 @@ def compute_signals(ticker: str) -> dict:
 
     m1, m5 = fetch_intraday(ticker)
     daily = fetch_daily(ticker)
-    fuel = fetch_fuel(ticker)
+    fuel = fetch_fuel(ticker, live=fuel_live)
     s["fuel"] = fuel
 
     if m1 is None or len(m1) < 6 or daily is None or len(daily) < 5:
@@ -1449,6 +1648,14 @@ st.sidebar.markdown("---")
 
 st.sidebar.markdown("<div class='sidebar-section'>Watchlist</div>", unsafe_allow_html=True)
 
+# ── Top-N results slider (defined early — used by all-presets caption) ─
+top_n = st.sidebar.slider(
+    "Results to show", 5, 30, 10,
+    help="How many stocks to display after the scan, ranked by Score. "
+         "Set to 5 to see only the hottest names, 30 for a full board. "
+         "Applies to all watchlist modes.",
+)
+
 # ── Scan ALL presets toggle ──────────────────────────────────────────
 all_presets_mode = st.sidebar.toggle(
     "Scan ALL presets",
@@ -1540,14 +1747,6 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
 
-# ── Top-N results slider ─────────────────────────────────────────────
-top_n = st.sidebar.slider(
-    "Results to show", 5, 30, 10,
-    help="How many stocks to display after the scan, ranked by Score. "
-         "Set to 5 to see only the hottest names, 30 for a full board. "
-         "Applies to all watchlist modes.",
-)
-
 alert_threshold = st.sidebar.slider(
     "Alert score threshold", 40, 95, 65,
     help="A ticker triggers an alert (feed entry + phone push) the first time "
@@ -1583,6 +1782,15 @@ if alpaca_keys():
     st.sidebar.success("Data feed: Alpaca (real-time IEX)")
 else:
     st.sidebar.info("Data feed: Yahoo (may lag ~15 min). Add Alpaca keys in secrets for real-time.")
+
+# Load preset fuel cache once per session (before sidebar status panel).
+if "_fuel_cache_initialized" not in st.session_state:
+    _cache_bundle = initialize_preset_fuel_cache()
+    _seed_fuel_to_session(_cache_bundle["fuel"], _cache_bundle["meta"])
+
+# ── Preset fuel cache status (GitHub nightly + local refresh temp file) ─
+_render_fuel_cache_sidebar()
+
 st.sidebar.caption(
     "This tool detects momentum early; it does not predict the future. "
     "Not financial advice."
@@ -1593,18 +1801,10 @@ if "alerts" not in st.session_state:
 if "alerted" not in st.session_state:
     st.session_state.alerted = set()
 
-# ── Load pre-seeded fuel cache from GitHub Actions nightly run ───────
-# This runs once per server session. The seed provides instant fuel data
-# (fundamentals, catalysts, short interest) for all preset tickers so
-# the first scan shows full data without waiting for yfinance calls.
-# fetch_fuel() reads from this seed first, then overrides with live data.
-_seed_fuel_map = load_preset_fuel_cache()
-_seed_fuel_to_cache(_seed_fuel_map)
-
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.4"
+APP_VERSION = "v3.5"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -1665,7 +1865,8 @@ with col_refresh:
     refresh_clicked = st.button(
         "▶ Refresh scan",
         type="primary",
-        help="Rescan the current preset and update its cache.",
+        help="Download live intraday + fuel data, rescan the current watchlist, "
+             "and update the local preset fuel cache.",
         use_container_width=True,
     )
 with col_status:
@@ -1681,6 +1882,12 @@ should_scan = (
 
 # ── Foreground scan ───────────────────────────────────────────────────
 if should_scan:
+    if refresh_clicked:
+        fetch_fuel.clear()
+        fetch_intraday.clear()
+        fetch_daily.clear()
+
+    _fuel_live = bool(refresh_clicked)
     # Clear stale partials so background doesn't mix old data
     st.session_state["bg_partial"].pop(_active_cache_key, None)
     st.session_state["bg_scan_cursor"].pop(_active_cache_key, None)
@@ -1691,12 +1898,12 @@ if should_scan:
     _fg_results  = []
 
     for _i, _t in enumerate(tickers):
-        _fg_results.append(compute_signals(_t))
+        _fg_results.append(compute_signals(_t, fuel_live=_fuel_live))
         _fg_progress.progress((_i + 1) / _n)
         _fg_label.markdown(
             f"<span style='color:#cc0000;font-family:Space Mono,monospace;"
             f"font-size:13px;font-weight:500'>"
-            f"Scanning {_t}… ({_i + 1}/{len(tickers)})</span>",
+            f"{'Refreshing' if _fuel_live else 'Scanning'} {_t}… ({_i + 1}/{len(tickers)})</span>",
             unsafe_allow_html=True,
         )
 
@@ -1709,9 +1916,13 @@ if should_scan:
     st.session_state["last_results"]       = results
     st.session_state["last_scan_time"]     = datetime.now().strftime("%H:%M:%S")
     st.session_state["last_watchlist_key"] = current_watchlist_key
+    if refresh_clicked:
+        _persist_live_fuel_cache(results)
+        fetch_fuel.clear()
+    _scan_mode = "live refresh" if refresh_clicked else "scan"
     _status_slot.markdown(
         f"<div style='padding:6px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#7a9ab8'>{len(results)} tickers scanned</div>",
+        f"color:#7a9ab8'>{len(results)} tickers · {_scan_mode}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2946,8 +3157,8 @@ with tab_lookup:
     if lk_ticker:
         # ── Step 1: Live ignition signals (Alpaca → Yahoo) ────────────
         with st.spinner(f"Running live ignition scan on {lk_ticker}…"):
-            lk_sig  = compute_signals(lk_ticker)
-            lk_fuel = fetch_fuel(lk_ticker)
+            lk_sig  = compute_signals(lk_ticker, fuel_live=bool(lk_run))
+            lk_fuel = fetch_fuel(lk_ticker, live=bool(lk_run))
             lk_sig["fuel"] = lk_fuel
 
         # ── Step 2: Deep fundamentals (Alpaca history + Yahoo + dump) ─
