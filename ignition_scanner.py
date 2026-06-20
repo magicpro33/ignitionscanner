@@ -1547,28 +1547,27 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ----------------------------------------------------------------------------
-# Scan — current preset loads first; all other presets pre-cache in background
-# ----------------------------------------------------------------------------
-#
-# Architecture:
-#   session_state["preset_cache_store"]  = { cache_key: [result, ...] }
-#   session_state["bg_scan_cursor"]      = { cache_key: int }  (next ticker idx)
-#   session_state["bg_partial"]          = { cache_key: [result, ...] }
-#
-# On every rerun:
-#   1. Determine active cache key for current watchlist
-#   2. If not cached (or refresh pressed): foreground scan → store → render
-#   3. If cached: serve from cache → render immediately
-#   4. After rendering: if any preset is still uncached, scan one batch (5 tickers)
-#      then st.rerun() to continue — background bar shows overall progress
+# ============================================================================
+# SCAN ENGINE
+# ============================================================================
+# Design principles:
+#   1. On first load or preset change → foreground scan → show results → done
+#   2. Cache stores results per preset key in session_state
+#   3. When switching presets → check cache first → serve instantly if found
+#   4. Refresh button → force rescan of current preset, update cache
+#   5. Background caching → runs AFTER main UI renders, via st.fragment
+#      so the leaderboard and analyzer are never blocked or interrupted
+# ============================================================================
 
-current_watchlist_key = ",".join(sorted(tickers))
-watchlist_changed = (
-    st.session_state.get("last_watchlist_key") != current_watchlist_key
-)
+# ── Initialise persistent state ──────────────────────────────────────
+if "preset_cache_store" not in st.session_state:
+    st.session_state["preset_cache_store"] = {}
+if "bg_partial" not in st.session_state:
+    st.session_state["bg_partial"] = {}
+if "bg_scan_cursor" not in st.session_state:
+    st.session_state["bg_scan_cursor"] = {}
 
-# Active cache key — unique per mode + preset name
+# ── Determine active cache key ────────────────────────────────────────
 if all_presets_mode:
     _active_cache_key = "__all_presets__"
 elif screener_mode:
@@ -1576,13 +1575,14 @@ elif screener_mode:
 elif preset and preset != "Custom":
     _active_cache_key = f"preset_cache:{preset}"
 else:
-    _active_cache_key = f"preset_cache:custom:{current_watchlist_key[:64]}"
+    _active_cache_key = "preset_cache:custom:" + ",".join(sorted(tickers))[:64]
 
-# Ensure cache store always exists
-if "preset_cache_store" not in st.session_state:
-    st.session_state["preset_cache_store"] = {}
+current_watchlist_key = ",".join(sorted(tickers))
+watchlist_changed = (
+    st.session_state.get("last_watchlist_key") != current_watchlist_key
+)
 
-# ── Refresh button + status line (must come BEFORE should_scan) ──────
+# ── Refresh button (must be defined before should_scan) ───────────────
 col_refresh, col_status = st.columns([1, 4])
 with col_refresh:
     refresh_clicked = st.button(
@@ -1594,24 +1594,27 @@ with col_refresh:
 with col_status:
     _status_slot = st.empty()
 
-# Background progress bar slot — full width, below the button row
-_bg_bar_slot = st.empty()
-
+# ── Decide whether we need a foreground scan ──────────────────────────
+_cache = st.session_state["preset_cache_store"]
 should_scan = (
     refresh_clicked
     or watchlist_changed
-    or "last_results" not in st.session_state
-    or _active_cache_key not in st.session_state["preset_cache_store"]
+    or _active_cache_key not in _cache
 )
 
 # ── Foreground scan ───────────────────────────────────────────────────
 if should_scan:
-    results = []
+    # Clear stale partials so background doesn't mix old data
+    st.session_state["bg_partial"].pop(_active_cache_key, None)
+    st.session_state["bg_scan_cursor"].pop(_active_cache_key, None)
+
     _fg_progress = st.progress(0.0, text="")
-    _fg_label = st.empty()
-    _n = max(len(tickers), 1)
+    _fg_label    = st.empty()
+    _n           = max(len(tickers), 1)
+    _fg_results  = []
+
     for _i, _t in enumerate(tickers):
-        results.append(compute_signals(_t))
+        _fg_results.append(compute_signals(_t))
         _fg_progress.progress((_i + 1) / _n)
         _fg_label.markdown(
             f"<span style='color:#cc0000;font-family:Space Mono,monospace;"
@@ -1619,129 +1622,36 @@ if should_scan:
             f"Scanning {_t}… ({_i + 1}/{len(tickers)})</span>",
             unsafe_allow_html=True,
         )
+
     _fg_progress.empty()
     _fg_label.empty()
 
-    # Commit to session state and per-preset cache
-    st.session_state["last_results"] = results
-    st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
-    st.session_state["last_watchlist_key"] = current_watchlist_key
+    # Persist
+    results = _fg_results
     st.session_state["preset_cache_store"][_active_cache_key] = results
-
-    # Clear any stale background partial for this key
-    st.session_state.get("bg_partial", {}).pop(_active_cache_key, None)
-    st.session_state.get("bg_scan_cursor", {}).pop(_active_cache_key, None)
-
+    st.session_state["last_results"]       = results
+    st.session_state["last_scan_time"]     = datetime.now().strftime("%H:%M:%S")
+    st.session_state["last_watchlist_key"] = current_watchlist_key
     _status_slot.markdown(
-        f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
+        f"<div style='padding:6px 0;font-family:Space Mono,monospace;font-size:12px;"
         f"color:#7a9ab8'>{len(results)} tickers scanned</div>",
         unsafe_allow_html=True,
     )
 
 else:
-    # Serve from cache — instant, no API calls
-    results = st.session_state["preset_cache_store"].get(
-        _active_cache_key, st.session_state.get("last_results", [])
-    )
-    if results is None:
-        results = []
-
-    _scan_count = len(results)
+    # ── Cache hit — serve instantly ───────────────────────────────────
+    results = _cache.get(_active_cache_key) or st.session_state.get("last_results") or []
     _status_slot.markdown(
-        f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#7a9ab8'>{_scan_count} tickers scanned</div>",
+        f"<div style='padding:6px 0;font-family:Space Mono,monospace;font-size:12px;"
+        f"color:#7a9ab8'>{len(results)} tickers scanned "
+        f"<span style='color:#1e3a5f'>· cached</span></div>",
         unsafe_allow_html=True,
     )
 
-# ── Background pre-cache (named presets only, not all-presets/screener) ──
-# After results are committed above, check if any named preset still needs caching.
-# We render the progress bar NOW (before st.rerun) so the user sees it.
-_do_bg_cache = (
-    not should_scan          # only do background when foreground just served cache
-    and not all_presets_mode
-    and not screener_mode
-    and preset not in (None, "Custom")
-)
-
-if _do_bg_cache:
-    _cache_store = st.session_state["preset_cache_store"]
-    _bg_partial  = st.session_state.setdefault("bg_partial", {})
-    _bg_cursor   = st.session_state.setdefault("bg_scan_cursor", {})
-
-    # Find the first uncached preset (skip the active one — already done)
-    _uncached_presets = [
-        (name, tkrs)
-        for name, tkrs in PRESETS.items()
-        if f"preset_cache:{name}" not in _cache_store
-        and name != preset
-    ]
-
-    _total_presets  = len(PRESETS)
-    _cached_count   = sum(
-        1 for n in PRESETS if f"preset_cache:{n}" in _cache_store
-    )
-
-    if _uncached_presets:
-        _bg_name, _bg_tkrs_raw = _uncached_presets[0]
-        _bg_key     = f"preset_cache:{_bg_name}"
-        _bg_tickers = [t.strip().upper() for t in _bg_tkrs_raw.split(",") if t.strip()]
-        _cursor     = _bg_cursor.get(_bg_key, 0)
-
-        # ── Render background bar BEFORE scanning or rerunning ────────
-        # Include per-ticker progress within the current preset being scanned
-        _preset_frac  = _cached_count / _total_presets
-        _ticker_frac  = _cursor / max(len(_bg_tickers), 1)
-        _overall_pct  = (_preset_frac + _ticker_frac / _total_presets) * 100
-        _bar_w        = f"{min(_overall_pct, 99):.1f}%"
-
-        _bg_bar_slot.markdown(
-            f"<div style='display:flex;align-items:center;gap:8px;"
-            f"font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a;"
-            f"padding:2px 0 4px'>"
-            f"<span style='white-space:nowrap'>caching {_bg_name}"
-            f" ({_cached_count}/{_total_presets})</span>"
-            f"<div style='flex:1;background:#122540;border-radius:3px;"
-            f"height:4px;overflow:hidden'>"
-            f"<div style='width:{_bar_w};height:100%;background:#f5a623;"
-            f"border-radius:3px;transition:width 0.3s'></div>"
-            f"</div></div>",
-            unsafe_allow_html=True,
-        )
-
-        # ── Scan one batch of tickers ─────────────────────────────────
-        _BATCH      = 5
-        _batch_end  = min(_cursor + _BATCH, len(_bg_tickers))
-        _partial    = list(_bg_partial.get(_bg_key, []))
-
-        for _t in _bg_tickers[_cursor:_batch_end]:
-            _partial.append(compute_signals(_t))
-
-        if _batch_end >= len(_bg_tickers):
-            # Preset complete — promote to cache, clean up scratch
-            _cache_store[_bg_key] = _partial
-            _bg_partial.pop(_bg_key, None)
-            _bg_cursor.pop(_bg_key, None)
-        else:
-            # More tickers remain — save cursor and partial
-            _bg_partial[_bg_key]  = _partial
-            _bg_cursor[_bg_key]   = _batch_end
-
-        # Persist back to session state
-        st.session_state["preset_cache_store"] = _cache_store
-        st.session_state["bg_partial"]         = _bg_partial
-        st.session_state["bg_scan_cursor"]     = _bg_cursor
-
-        # Trigger next batch — Streamlit will re-render with the bar updated
-        st.rerun()
-
-    else:
-        # All presets cached — show a dim completion tick and clear the bar
-        _bg_bar_slot.markdown(
-            f"<div style='font-family:Space Mono,monospace;font-size:10px;"
-            f"color:#1e3a5f;padding:2px 0 4px'>"
-            f"all {_total_presets} presets cached ✓</div>",
-            unsafe_allow_html=True,
-        )
+# ── Background-cache progress bar (rendered here, filled by fragment below) ──
+# This slot sits below the button row and is written by the fragment, not the
+# main script, so the main UI renders fully without waiting.
+_bg_progress_slot = st.empty()
 
 ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
@@ -3337,6 +3247,111 @@ with tab_lookup:
                 st.markdown(full_cat, unsafe_allow_html=True)
 
 
-# Auto refresh
-# ----------------------------------------------------------------------------
-# Auto-refresh removed: scan runs on demand via Refresh button only.
+# ============================================================================
+# BACKGROUND PRESET CACHE FRAGMENT
+# ============================================================================
+# st.fragment lets this block rerun independently from the main script.
+# When run_every fires, only this fragment re-executes — the leaderboard,
+# stock analyzer, and all other UI stay completely frozen and usable.
+# The fragment writes to session_state which persists across main reruns.
+# ============================================================================
+
+@st.fragment(run_every=2)
+def _background_cache_worker():
+    """Caches remaining presets one batch at a time without touching main UI."""
+
+    # Only run background caching for normal preset mode
+    if st.session_state.get("_bg_mode_active") is not True:
+        return
+
+    _cs   = st.session_state.get("preset_cache_store", {})
+    _bp   = st.session_state.get("bg_partial", {})
+    _bk   = st.session_state.get("bg_scan_cursor", {})
+    _apn  = st.session_state.get("_bg_active_preset", "")
+
+    _total   = len(PRESETS)
+    _n_cached = sum(1 for n in PRESETS if f"preset_cache:{n}" in _cs)
+
+    # Find first uncached preset that isn't the active one
+    _pending = [
+        (name, tkrs)
+        for name, tkrs in PRESETS.items()
+        if f"preset_cache:{name}" not in _cs and name != _apn
+    ]
+
+    if not _pending:
+        # All done — render completion and stop self
+        st.markdown(
+            f"<div style='font-family:Space Mono,monospace;font-size:10px;"
+            f"color:#1e3a5f;padding:2px 0'>all {_total} presets cached ✓</div>",
+            unsafe_allow_html=True,
+        )
+        st.session_state["_bg_mode_active"] = False
+        return
+
+    _bg_name, _bg_tkrs_raw = _pending[0]
+    _bg_key     = f"preset_cache:{_bg_name}"
+    _bg_tickers = [t.strip().upper() for t in _bg_tkrs_raw.split(",") if t.strip()]
+    _cursor     = _bk.get(_bg_key, 0)
+
+    # Overall progress: fully-cached presets + fraction of current preset
+    _ticker_frac = _cursor / max(len(_bg_tickers), 1)
+    _pct = (_n_cached + _ticker_frac) / _total * 100
+    _bar_w = f"{min(_pct, 99):.1f}%"
+
+    # Render the mini bar inside the pre-allocated slot
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:8px;"
+        f"font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a;"
+        f"padding:2px 0 2px'>"
+        f"<span style='white-space:nowrap;min-width:0'>"
+        f"background: {_bg_name} ({_n_cached}/{_total})</span>"
+        f"<div style='flex:1;background:#122540;border-radius:3px;"
+        f"height:4px;min-width:60px;overflow:hidden'>"
+        f"<div style='width:{_bar_w};height:100%;background:#f5a623;"
+        f"border-radius:3px'></div></div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # Scan one batch of tickers
+    _BATCH     = 5
+    _batch_end = min(_cursor + _BATCH, len(_bg_tickers))
+    _partial   = list(_bp.get(_bg_key, []))
+
+    for _t in _bg_tickers[_cursor:_batch_end]:
+        _partial.append(compute_signals(_t))
+
+    if _batch_end >= len(_bg_tickers):
+        # Preset complete
+        _cs[_bg_key] = _partial
+        _bp.pop(_bg_key, None)
+        _bk.pop(_bg_key, None)
+    else:
+        _bp[_bg_key] = _partial
+        _bk[_bg_key] = _batch_end
+
+    # Write back — these persist across the next main-script rerun
+    st.session_state["preset_cache_store"] = _cs
+    st.session_state["bg_partial"]         = _bp
+    st.session_state["bg_scan_cursor"]     = _bk
+
+
+# ── Activate background worker only when appropriate ─────────────────
+# Set the flag before calling the fragment so it reads the right values.
+_run_bg = (
+    not all_presets_mode
+    and not screener_mode
+    and preset not in (None, "Custom")
+    and any(
+        f"preset_cache:{n}" not in st.session_state["preset_cache_store"]
+        for n in PRESETS
+    )
+)
+st.session_state["_bg_mode_active"]    = _run_bg
+st.session_state["_bg_active_preset"]  = preset or ""
+
+# Render the fragment into the pre-allocated slot
+with _bg_progress_slot:
+    _background_cache_worker()
+
+# ── Auto-refresh stub (removed — background fragment handles it) ──────
