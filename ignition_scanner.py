@@ -27,7 +27,6 @@ Run:  streamlit run ignition_scanner.py
 Data: Yahoo Finance via yfinance (free, ~15 min delayed on some feeds).
 """
 
-import os
 import time
 import random
 import math
@@ -630,32 +629,6 @@ def _bars_ok(df, n):
     return df is not None and len(df) >= n
 
 
-def _alpaca_snapshot(ticker: str, key: str, secret: str) -> dict:
-    """Latest trade/quote snapshot from Alpaca Market Data v2."""
-    url = f"https://data.alpaca.markets/v2/stocks/{ticker}/snapshot"
-    headers = {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
-    try:
-        resp = requests.get(url, headers=headers, timeout=8)
-        resp.raise_for_status()
-        data = resp.json() or {}
-        snap = {}
-        for src in (data.get("latestTrade"), data.get("minuteBar"), data.get("dailyBar")):
-            if isinstance(src, dict) and src.get("p") is not None:
-                snap["price"] = float(src["p"])
-                break
-        prev = data.get("prevDailyBar") or {}
-        if isinstance(prev, dict) and prev.get("c") is not None:
-            snap["previous_close"] = float(prev["c"])
-        quote = data.get("latestQuote") or {}
-        if isinstance(quote, dict):
-            bp, ap = quote.get("bp"), quote.get("ap")
-            if bp and ap:
-                snap["price"] = snap.get("price") or (float(bp) + float(ap)) / 2.0
-        return snap
-    except Exception:
-        return {}
-
-
 @st.cache_data(ttl=55, show_spinner=False)
 def fetch_intraday(ticker: str):
     """1-minute bars for today plus 5-minute bars for ~5 days.
@@ -729,368 +702,6 @@ def fetch_daily(ticker: str):
 SCREENER_URL_DEFAULT = (
     "https://raw.githubusercontent.com/magicpro33/stock/main/data/stock_data.json.gz"
 )
-
-# Pre-seeded fuel cache generated nightly by GitHub Actions (seed/seed_cache.py).
-# Contains fundamentals, news, catalysts for every ticker in every preset.
-# The app loads this ONCE on startup and uses it to instantly populate the
-# fuel cache — so switching presets is instant on first load.
-PRESET_FUEL_CACHE_URL = (
-    "https://raw.githubusercontent.com/magicpro33/ignitionscanner/main/data/preset_fuel_cache.json.gz"
-)
-_APP_DIR = os.path.dirname(os.path.abspath(__file__))
-_FUEL_CACHE_DIR = os.path.join(_APP_DIR, "data")
-GITHUB_FUEL_SNAPSHOT_PATH = os.path.join(_FUEL_CACHE_DIR, "preset_fuel_cache.github.json.gz")
-LOCAL_FUEL_CACHE_PATH = os.path.join(_FUEL_CACHE_DIR, "preset_fuel_cache.local.json.gz")
-
-_FUEL_SEED_FIELDS = (
-    "short_pct_float", "float_shares", "days_to_cover", "inst_pct",
-    "high_52w", "name", "sector", "target_mean",
-    "insider_buys", "insider_sells", "insider_net_buy_usd",
-    "news_count_48h", "news_sentiment", "latest_headline",
-    "earnings_days", "catalyst_tags", "catalyst_suppressed",
-    "catalyst_score", "bimodal_event",
-)
-
-# yfinance .info keys → fetch_fuel keys (also used for nightly preset cache "info" blob)
-_INFO_TO_FUEL = {
-    "shortPercentOfFloat": "short_pct_float",
-    "floatShares": "float_shares",
-    "fiftyTwoWeekHigh": "high_52w",
-    "targetMeanPrice": "target_mean",
-    "sector": "sector",
-    "shortName": "name",
-    "heldPercentInstitutions": "inst_pct",
-    "currentPrice": "_cache_price",
-    "regularMarketPrice": "_cache_price",
-    "previousClose": "_cache_prev_close",
-}
-
-# Nightly screener dump columns → fetch_fuel keys
-_DUMP_TO_FUEL = {
-    "short_pct_float": "short_pct_float",
-    "float_shares": "float_shares",
-    "target_mean": "target_mean",
-    "beta": "beta",
-    "price": "_cache_price",
-    "short_ratio": "days_to_cover",
-}
-
-
-def _parse_fuel_cache_payload(data: dict) -> dict:
-    fuel_map = data.get("fuel", {})
-    return {k.upper(): v for k, v in fuel_map.items()}
-
-
-def _read_fuel_cache_file(path: str):
-    if not os.path.isfile(path):
-        return None
-    try:
-        with gzip.open(path, "rb") as f:
-            data = json.loads(f.read().decode("utf-8"))
-        fuel_map = _parse_fuel_cache_payload(data)
-        meta = {
-            "generated_at": data.get("generated_at"),
-            "source": data.get("source", os.path.basename(path)),
-            "ticker_count": len(fuel_map),
-            "path": path,
-        }
-        return fuel_map, meta
-    except Exception:
-        return None
-
-
-def _write_fuel_cache_file(path: str, fuel_map: dict, source: str, generated_at=None):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    payload = {
-        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
-        "source": source,
-        "fuel": fuel_map,
-    }
-    raw = json.dumps(payload, default=str).encode("utf-8")
-    with gzip.open(path, "wb", compresslevel=6) as f:
-        f.write(raw)
-
-
-def _probe_github_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
-    """Lightweight check whether the nightly GitHub cache file exists."""
-    meta = {"github_url": url, "github_found": False, "github_status": None, "github_error": None}
-    try:
-        resp = requests.head(url, timeout=10, allow_redirects=True)
-        meta["github_status"] = resp.status_code
-        meta["github_found"] = resp.status_code == 200
-        if resp.status_code == 404:
-            meta["github_error"] = "File not found on GitHub (404)"
-    except Exception as exc:
-        meta["github_error"] = str(exc)
-    return meta
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _download_github_fuel_cache(url: str = PRESET_FUEL_CACHE_URL):
-    """Download the nightly GitHub fuel cache and save a local snapshot."""
-    meta = _probe_github_fuel_cache(url)
-    meta["loaded_source"] = "none"
-    try:
-        resp = requests.get(url, timeout=25)
-        if resp.status_code == 404:
-            meta["github_error"] = meta.get("github_error") or "File not found on GitHub (404)"
-            return {}, meta
-        resp.raise_for_status()
-        meta["github_found"] = True
-        meta["github_status"] = resp.status_code
-        raw = gzip.decompress(resp.content)
-        data = json.loads(raw.decode("utf-8"))
-        fuel_map = _parse_fuel_cache_payload(data)
-        meta["generated_at"] = data.get("generated_at")
-        meta["github_generated_at"] = data.get("generated_at")
-        meta["ticker_count"] = len(fuel_map)
-        meta["loaded_source"] = "github"
-        _write_fuel_cache_file(
-            GITHUB_FUEL_SNAPSHOT_PATH,
-            fuel_map,
-            source="github_nightly",
-            generated_at=data.get("generated_at"),
-        )
-        return fuel_map, meta
-    except Exception as exc:
-        meta["github_error"] = str(exc)
-        return {}, meta
-
-
-def _cache_generated_ts(meta):
-    if not meta:
-        return None
-    raw = meta.get("generated_at") or meta.get("github_generated_at")
-    if not raw:
-        return None
-    try:
-        return pd.to_datetime(raw, utc=True).to_pydatetime()
-    except Exception:
-        return None
-
-
-def initialize_preset_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
-    """Load the best available preset fuel cache once per session.
-
-    Priority:
-      1. Local temp cache (written by Refresh scan with live yfinance data)
-      2. On-disk GitHub snapshot (fast restart without re-download)
-      3. Fresh GitHub download (nightly Actions cache)
-    """
-    github_probe = _probe_github_fuel_cache(url)
-    local_bundle = _read_fuel_cache_file(LOCAL_FUEL_CACHE_PATH)
-    github_bundle = _read_fuel_cache_file(GITHUB_FUEL_SNAPSHOT_PATH)
-
-    fuel_map: dict = {}
-    meta = {
-        **github_probe,
-        "loaded_source": "none",
-        "ticker_count": 0,
-        "github_ticker_count": 0,
-        "generated_at": None,
-        "local_updated_at": None,
-        "github_generated_at": None,
-        "github_snapshot_path": GITHUB_FUEL_SNAPSHOT_PATH,
-        "local_cache_path": LOCAL_FUEL_CACHE_PATH,
-    }
-
-    candidates: list[tuple[str, dict, dict]] = []
-    if local_bundle:
-        _fuel, _meta = local_bundle
-        candidates.append(("local_refresh", _fuel, _meta))
-        meta["local_updated_at"] = _meta.get("generated_at")
-    if github_bundle:
-        _fuel, _meta = github_bundle
-        candidates.append(("github_snapshot", _fuel, _meta))
-        meta["github_generated_at"] = _meta.get("generated_at")
-        meta["github_ticker_count"] = _meta.get("ticker_count", len(_fuel))
-        if meta["github_ticker_count"] > 0:
-            meta["github_found"] = True
-
-    if candidates:
-        source, fuel_map, chosen = max(
-            candidates,
-            key=lambda item: _cache_generated_ts(item[2]) or datetime.min.replace(tzinfo=timezone.utc),
-        )
-        meta["loaded_source"] = source
-        meta["generated_at"] = chosen.get("generated_at")
-        meta["ticker_count"] = len(fuel_map)
-        if not meta.get("github_found") and source.startswith("github"):
-            meta["github_found"] = len(fuel_map) > 0
-
-    if not fuel_map:
-        fuel_map, dl_meta = _download_github_fuel_cache(url)
-        meta.update({k: v for k, v in dl_meta.items() if v is not None})
-        meta["ticker_count"] = len(fuel_map)
-        if fuel_map:
-            meta["loaded_source"] = "github"
-            meta["generated_at"] = dl_meta.get("generated_at")
-            meta["github_generated_at"] = dl_meta.get("generated_at")
-            meta["github_ticker_count"] = len(fuel_map)
-            meta["github_found"] = True
-
-    return {"fuel": fuel_map, "meta": meta}
-
-
-def _seed_fuel_to_session(fuel_map: dict, meta: dict) -> None:
-    if "_fuel_cache_initialized" in st.session_state:
-        return
-    st.session_state["_seed_fuel"] = fuel_map or {}
-    st.session_state["_fuel_cache_meta"] = meta or {}
-    st.session_state["_fuel_cache_initialized"] = True
-
-
-def _empty_fuel_dict(ticker: str) -> dict:
-    return {
-        "short_pct_float": None, "float_shares": None,
-        "insider_net_buy_usd": 0.0, "insider_buys": 0, "insider_sells": 0,
-        "news_count_48h": 0, "news_sentiment": 0, "latest_headline": "",
-        "high_52w": None, "name": ticker,
-        "target_mean": None,
-        "earnings_days": None, "days_to_cover": None, "inst_pct": None,
-        "sector": "", "catalyst_tags": [], "catalyst_score": 0.0,
-        "bimodal_event": False, "catalyst_suppressed": [],
-        "_cache_price": None, "_cache_prev_close": None,
-    }
-
-
-def _fuel_has_core_data(out: dict) -> bool:
-    return any(
-        out.get(k) not in (None, "", [], 0, 0.0)
-        for k in ("short_pct_float", "float_shares", "high_52w", "sector", "catalyst_tags")
-    )
-
-
-def _apply_seed_fuel(out: dict, ticker: str) -> bool:
-    """Fill fuel dict from the preset/GitHub nightly cache. Returns True if usable."""
-    _seed = st.session_state.get("_seed_fuel", {})
-    _sf = _seed.get(ticker.upper())
-    if not _sf:
-        return False
-    for _k in _FUEL_SEED_FIELDS:
-        val = _sf.get(_k)
-        if val is not None and val != "" and val != []:
-            out[_k] = val
-    info = _sf.get("info") or {}
-    if isinstance(info, dict):
-        for info_key, fuel_key in _INFO_TO_FUEL.items():
-            val = info.get(info_key)
-            if val is None or val == "":
-                continue
-            if fuel_key == "inst_pct" and out.get("inst_pct") is None:
-                try:
-                    out["inst_pct"] = round(float(val) * 100, 1) if float(val) <= 1.5 else round(float(val), 1)
-                except Exception:
-                    pass
-            elif out.get(fuel_key) in (None, "", 0):
-                out[fuel_key] = val
-    return _fuel_has_core_data(out) or out.get("_cache_price") is not None
-
-
-def _fill_fuel_from_screener_dump(out: dict, ticker: str) -> None:
-    """Tier 3: nightly stock_data.json.gz for any fields still missing."""
-    need_dump = any(out.get(k) in (None, "", 0) for k in (
-        "short_pct_float", "float_shares", "high_52w", "target_mean", "sector", "_cache_price",
-    ))
-    if not need_dump:
-        return
-    try:
-        dump = load_screener_dump(SCREENER_URL_DEFAULT)
-        sym = ticker.upper()
-        if sym not in dump.index:
-            return
-        row = dump.loc[sym]
-        for dump_key, fuel_key in _DUMP_TO_FUEL.items():
-            if dump_key not in row.index:
-                continue
-            val = row.get(dump_key)
-            if val is None or (isinstance(val, float) and pd.isna(val)):
-                continue
-            if out.get(fuel_key) in (None, "", 0):
-                out[fuel_key] = val
-        out["_from_screener_dump"] = True
-    except Exception:
-        pass
-
-
-def _warm_preset_scan_cache_from_fuel() -> None:
-    """Pre-build per-preset leaderboard rows from the nightly fuel cache (no API scan)."""
-    if st.session_state.get("_preset_scan_cache_warmed"):
-        return
-    seed = st.session_state.get("_seed_fuel", {})
-    if not seed:
-        return
-    store = st.session_state.setdefault("preset_cache_store", {})
-    for name, tkrs_raw in PRESETS.items():
-        key = f"preset_cache:{name}"
-        if key not in store:
-            tlist = [t.strip().upper() for t in tkrs_raw.split(",") if t.strip()]
-            store[key] = [compute_signals_from_fuel_cache(t) for t in tlist]
-    if "__all_presets__" not in store:
-        seen, combined = set(), []
-        for tkrs in PRESETS.values():
-            for t in [x.strip().upper() for x in tkrs.split(",") if x.strip()]:
-                if t not in seen and t not in ALL_PRESETS_ETF_EXCLUDE:
-                    seen.add(t)
-                    combined.append(t)
-        store["__all_presets__"] = [compute_signals_from_fuel_cache(t) for t in combined]
-    st.session_state["preset_cache_store"] = store
-    st.session_state["_preset_scan_cache_warmed"] = True
-
-
-def _persist_live_fuel_cache(results: list) -> None:
-    """Merge live fuel from a refresh scan into the session seed and temp file."""
-    seed = dict(st.session_state.get("_seed_fuel", {}))
-    for row in results:
-        fuel = row.get("fuel")
-        if not fuel:
-            continue
-        seed[row["ticker"].upper()] = {**seed.get(row["ticker"].upper(), {}), **fuel}
-    if not seed:
-        return
-    now_iso = datetime.now(timezone.utc).isoformat()
-    st.session_state["_seed_fuel"] = seed
-    _write_fuel_cache_file(LOCAL_FUEL_CACHE_PATH, seed, source="live_refresh", generated_at=now_iso)
-    meta = dict(st.session_state.get("_fuel_cache_meta", {}))
-    meta.update({
-        "loaded_source": "local_refresh",
-        "local_updated_at": now_iso,
-        "generated_at": now_iso,
-        "ticker_count": len(seed),
-    })
-    st.session_state["_fuel_cache_meta"] = meta
-
-
-def _render_fuel_cache_sidebar() -> None:
-    meta = st.session_state.get("_fuel_cache_meta", {})
-    with st.sidebar.expander("Preset fuel cache", expanded=False):
-        if meta.get("github_found"):
-            gh_at = meta.get("github_generated_at") or "unknown time"
-            gh_n = meta.get("github_ticker_count") or 0
-            st.success(f"GitHub nightly cache: found ({gh_n} tickers)")
-            st.caption(f"GitHub generated: {gh_at}")
-        else:
-            st.warning("GitHub nightly cache: not found")
-            if meta.get("github_error"):
-                st.caption(meta["github_error"])
-            elif meta.get("github_status"):
-                st.caption(f"HTTP {meta['github_status']}")
-
-        loaded = meta.get("loaded_source", "none")
-        if loaded == "local_refresh":
-            st.info("Active data: local refresh cache (fast preset loads)")
-            if meta.get("local_updated_at"):
-                st.caption(f"Last refresh saved: {meta['local_updated_at']}")
-        elif loaded in ("github", "github_snapshot"):
-            st.info("Active data: GitHub nightly cache (fast preset loads)")
-        elif loaded == "none":
-            st.error("No preset fuel cache loaded — fuel will fetch live (slower).")
-
-        st.caption(
-            "Preset scans use cached fuel for speed. "
-            "▶ Refresh scan downloads live fuel + intraday and updates the local cache."
-        )
-
 
 
 def _strip_heavy(d: dict) -> dict:
@@ -1282,19 +893,27 @@ def sector_allows(catalyst: str, sector: str) -> bool:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_fuel_live(ticker: str) -> dict:
-    """Live fuel fetch: Alpaca snapshot → yfinance → nightly screener dump."""
-    out = _empty_fuel_dict(ticker)
-    _apply_seed_fuel(out, ticker)
-
-    _ak = alpaca_keys()
-    if _ak:
-        snap = _alpaca_snapshot(ticker, *_ak)
-        if snap.get("price") and out.get("_cache_price") is None:
-            out["_cache_price"] = snap["price"]
-        if snap.get("previous_close") and out.get("_cache_prev_close") is None:
-            out["_cache_prev_close"] = snap["previous_close"]
-
+def fetch_fuel(ticker: str) -> dict:
+    """Slow-moving 'primed to move' data: short interest, float,
+    insider transactions, news, 52-week levels, earnings date,
+    sector, institutional ownership, and full catalyst detection."""
+    out = {
+        # existing
+        "short_pct_float": None, "float_shares": None,
+        "insider_net_buy_usd": 0.0, "insider_buys": 0, "insider_sells": 0,
+        "news_count_48h": 0, "news_sentiment": 0, "latest_headline": "",
+        "high_52w": None, "name": ticker,
+        "target_mean": None,   # analyst mean price target
+        # new catalyst fields
+        "earnings_days": None,       # days until next earnings (negative = past)
+        "days_to_cover": None,       # short interest / avg daily vol
+        "inst_pct": None,            # institutional ownership %
+        "sector": "",                # sector string
+        "catalyst_tags": [],         # list of detected catalyst types
+        "catalyst_score": 0.0,       # 0-100 composite catalyst sub-score
+        "bimodal_event": False,      # binary event within ±3 days
+        "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
+    }
     try:
         tk = yf.Ticker(ticker)
         info = {}
@@ -1303,46 +922,28 @@ def _fetch_fuel_live(ticker: str) -> dict:
         except Exception:
             info = {}
 
-        def _set_if_missing(fuel_key, val):
-            if val is None or val == "":
-                return
-            if fuel_key == "inst_pct" and out.get("inst_pct") is None:
-                try:
-                    out["inst_pct"] = round(float(val) * 100, 1) if float(val) <= 1.5 else round(float(val), 1)
-                except Exception:
-                    pass
-            elif out.get(fuel_key) in (None, "", 0, 0.0, []):
-                out[fuel_key] = val
+        out["short_pct_float"] = info.get("shortPercentOfFloat")
+        out["float_shares"] = info.get("floatShares")
+        out["high_52w"] = info.get("fiftyTwoWeekHigh")
+        out["name"] = info.get("shortName") or ticker
+        out["target_mean"] = info.get("targetMeanPrice")
+        out["sector"] = info.get("sector") or ""
 
-        for info_key, fuel_key in _INFO_TO_FUEL.items():
-            _set_if_missing(fuel_key, info.get(info_key))
-
-        if out.get("short_pct_float") is None:
-            out["short_pct_float"] = info.get("shortPercentOfFloat")
-        if out.get("float_shares") is None:
-            out["float_shares"] = info.get("floatShares")
-        if out.get("high_52w") is None:
-            out["high_52w"] = info.get("fiftyTwoWeekHigh")
-        if not out.get("name") or out.get("name") == ticker:
-            out["name"] = info.get("shortName") or ticker
-        if out.get("target_mean") is None:
-            out["target_mean"] = info.get("targetMeanPrice")
-        if not out.get("sector"):
-            out["sector"] = info.get("sector") or ""
-
+        # Days to cover (short interest / avg daily volume)
         shares_short = info.get("sharesShort")
         avg_vol = info.get("averageVolume") or info.get("averageDailyVolume10Day")
-        if out.get("days_to_cover") is None and shares_short and avg_vol and avg_vol > 0:
+        if shares_short and avg_vol and avg_vol > 0:
             out["days_to_cover"] = round(shares_short / avg_vol, 1)
 
-        if out.get("inst_pct") is None:
-            inst = info.get("heldPercentInstitutions")
-            if inst is not None:
-                out["inst_pct"] = round(float(inst) * 100, 1)
+        # Institutional ownership
+        inst = info.get("heldPercentInstitutions")
+        if inst is not None:
+            out["inst_pct"] = round(float(inst) * 100, 1)
 
+        # Next earnings date
         try:
             cal = tk.calendar
-            if out.get("earnings_days") is None and isinstance(cal, dict):
+            if isinstance(cal, dict):
                 ed = cal.get("Earnings Date") or cal.get("earningsDate")
                 if ed is not None:
                     if isinstance(ed, (list, tuple)):
@@ -1350,7 +951,7 @@ def _fetch_fuel_live(ticker: str) -> dict:
                     ed_dt = pd.to_datetime(ed, errors="coerce")
                     if pd.notna(ed_dt):
                         out["earnings_days"] = (ed_dt.date() - datetime.now().date()).days
-            elif out.get("earnings_days") is None and isinstance(cal, pd.DataFrame) and not cal.empty:
+            elif isinstance(cal, pd.DataFrame) and not cal.empty:
                 for lbl in ["Earnings Date", "earningsDate"]:
                     if lbl in cal.index:
                         val = cal.loc[lbl].iloc[0]
@@ -1361,247 +962,158 @@ def _fetch_fuel_live(ticker: str) -> dict:
         except Exception:
             pass
 
-        if out.get("insider_buys", 0) == 0 and out.get("insider_sells", 0) == 0:
-            try:
-                ins = tk.insider_transactions
-                if ins is not None and len(ins) > 0:
-                    ins = ins.copy()
-                    date_col = next((c for c in ["Start Date", "startDate", "Date"] if c in ins.columns), None)
-                    if date_col:
-                        ins[date_col] = pd.to_datetime(ins[date_col], errors="coerce")
-                        cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
-                        ins = ins[ins[date_col] >= cutoff]
-                    text_col = "Text" if "Text" in ins.columns else None
-                    val_col = "Value" if "Value" in ins.columns else None
-                    for _, row in ins.iterrows():
-                        txt = str(row.get(text_col, "")).lower() if text_col else ""
-                        tr = str(row.get("Transaction", "")).lower()
-                        val = row.get(val_col, 0) if val_col else 0
-                        try:
-                            val = float(val) if pd.notna(val) else 0.0
-                        except Exception:
-                            val = 0.0
-                        if ("purchase" in txt) or ("buy" in tr) or ("purchase" in tr):
-                            out["insider_buys"] += 1
-                            out["insider_net_buy_usd"] += abs(val)
-                        elif ("sale" in txt) or ("sell" in tr) or ("sale" in tr):
-                            out["insider_sells"] += 1
-                            out["insider_net_buy_usd"] -= abs(val)
-            except Exception:
-                pass
+        # Insider transactions (last ~90 days)
+        try:
+            ins = tk.insider_transactions
+            if ins is not None and len(ins) > 0:
+                ins = ins.copy()
+                date_col = None
+                for c in ["Start Date", "startDate", "Date"]:
+                    if c in ins.columns:
+                        date_col = c
+                        break
+                if date_col is not None:
+                    ins[date_col] = pd.to_datetime(ins[date_col], errors="coerce")
+                    cutoff = pd.Timestamp.now() - pd.Timedelta(days=90)
+                    ins = ins[ins[date_col] >= cutoff]
+                text_col = "Text" if "Text" in ins.columns else None
+                val_col = "Value" if "Value" in ins.columns else None
+                for _, row in ins.iterrows():
+                    txt = str(row.get(text_col, "")).lower() if text_col else ""
+                    tr = str(row.get("Transaction", "")).lower()
+                    val = row.get(val_col, 0) if val_col else 0
+                    try:
+                        val = float(val) if pd.notna(val) else 0.0
+                    except Exception:
+                        val = 0.0
+                    is_buy = ("purchase" in txt) or ("buy" in tr) or ("purchase" in tr)
+                    is_sell = ("sale" in txt) or ("sell" in tr) or ("sale" in tr)
+                    if is_buy:
+                        out["insider_buys"] += 1
+                        out["insider_net_buy_usd"] += abs(val)
+                    elif is_sell:
+                        out["insider_sells"] += 1
+                        out["insider_net_buy_usd"] -= abs(val)
+        except Exception:
+            pass
 
-        if out.get("news_count_48h", 0) == 0:
-            try:
-                news = tk.news or []
-                now = datetime.now(timezone.utc)
-                sent = count = 0
-                latest = ""
-                cat_hits = {k: 0 for k in CATALYST_KEYWORDS}
-                for item in news:
-                    content = item.get("content", item)
-                    title = content.get("title", "") or ""
-                    summary = content.get("summary", "") or ""
-                    full_text = (title + " " + summary).lower()
-                    pub = content.get("pubDate") or content.get("providerPublishTime")
-                    ts = None
-                    if isinstance(pub, (int, float)):
-                        ts = datetime.fromtimestamp(pub, tz=timezone.utc)
-                    elif isinstance(pub, str):
-                        try:
-                            ts = pd.to_datetime(pub, utc=True).to_pydatetime()
-                        except Exception:
-                            ts = None
-                    if ts is not None and (now - ts) <= timedelta(hours=48):
-                        count += 1
-                        if not latest:
-                            latest = title
-                        sent += sum(1 for w in POSITIVE_WORDS if w in full_text)
-                        sent -= sum(1 for w in NEGATIVE_WORDS if w in full_text)
-                    if ts is not None and (now - ts) <= timedelta(days=7):
-                        for cat, kws in CATALYST_KEYWORDS.items():
-                            cat_hits[cat] += sum(1 for w in kws if w in full_text)
-                out["news_count_48h"] = count
-                out["news_sentiment"] = sent
-                out["latest_headline"] = latest
-                sector = out.get("sector", "")
-                out["catalyst_tags"] = [
-                    c for c, h in cat_hits.items()
-                    if h >= CATALYST_MIN_HITS.get(c, 1) and sector_allows(c, sector)
-                ]
-                out["catalyst_suppressed"] = [
-                    c for c, h in cat_hits.items()
-                    if h > 0 and c not in out["catalyst_tags"]
-                ]
-            except Exception:
-                pass
+        # News flow + catalyst detection
+        try:
+            news = tk.news or []
+            now = datetime.now(timezone.utc)
+            sent = 0
+            count = 0
+            latest = ""
+            cat_hits: dict[str, int] = {k: 0 for k in CATALYST_KEYWORDS}
+            for item in news:
+                content = item.get("content", item)
+                title = content.get("title", "") or ""
+                summary = content.get("summary", "") or ""
+                full_text = (title + " " + summary).lower()
+                pub = content.get("pubDate") or content.get("providerPublishTime")
+                ts = None
+                if isinstance(pub, (int, float)):
+                    ts = datetime.fromtimestamp(pub, tz=timezone.utc)
+                elif isinstance(pub, str):
+                    try:
+                        ts = pd.to_datetime(pub, utc=True).to_pydatetime()
+                    except Exception:
+                        ts = None
+                if ts is not None and (now - ts) <= timedelta(hours=48):
+                    count += 1
+                    if not latest:
+                        latest = title
+                    sent += sum(1 for w in POSITIVE_WORDS if w in full_text)
+                    sent -= sum(1 for w in NEGATIVE_WORDS if w in full_text)
+                # Catalyst scan across all recent news (7 days for catalyst tagging)
+                if ts is not None and (now - ts) <= timedelta(days=7):
+                    for cat, kws in CATALYST_KEYWORDS.items():
+                        cat_hits[cat] += sum(1 for w in kws if w in full_text)
+            out["news_count_48h"] = count
+            out["news_sentiment"] = sent
+            out["latest_headline"] = latest
+            # Tag any catalyst with at least 1 keyword hit
+            # Apply Option 1 (sector whitelist) + Option 2 (min keyword hits)
+            sector = out.get("sector", "")
+            out["catalyst_tags"] = [
+                c for c, h in cat_hits.items()
+                if h >= CATALYST_MIN_HITS.get(c, 1)          # Option 2: threshold
+                and sector_allows(c, sector)                   # Option 1: sector
+            ]
+            # Track which catalysts were suppressed for transparency
+            out["catalyst_suppressed"] = [
+                c for c, h in cat_hits.items()
+                if h > 0 and c not in out["catalyst_tags"]
+            ]
+        except Exception:
+            pass
 
-        ed = out.get("earnings_days")
-        bimodal_news = any(t in out.get("catalyst_tags", []) for t in ("fda", "legal", "buyout"))
-        out["bimodal_event"] = (ed is not None and -1 <= ed <= 3) or bimodal_news
+        # Bimodal event: earnings within ±3 days OR fda/legal catalyst in news
+        ed = out["earnings_days"]
+        bimodal_news = any(t in out["catalyst_tags"] for t in ("fda", "legal", "buyout"))
+        out["bimodal_event"] = (
+            (ed is not None and -1 <= ed <= 3) or bimodal_news
+        )
 
-        if out.get("catalyst_score", 0) == 0 and out.get("catalyst_tags"):
-            cat_sc = 0.0
-            tags = out["catalyst_tags"]
-            if ed is not None:
-                if 0 <= ed <= 2:
-                    cat_sc += 30.0
-                elif ed == 3:
-                    cat_sc += 20.0
-                elif 4 <= ed <= 7:
-                    cat_sc += 12.0
-                elif -1 <= ed < 0:
-                    cat_sc += 15.0
-            for tag, pts in (("fda", 25), ("buyout", 25), ("partnership", 15), ("legal", 10),
-                             ("squeeze", 10), ("breakout", 8), ("geopolitical", 6), ("rate", 5)):
-                if tag in tags:
-                    cat_sc += pts
-            dtc = out.get("days_to_cover")
-            if dtc and dtc >= 10:
-                cat_sc += 15.0
-            elif dtc and dtc >= 5:
-                cat_sc += 8.0
-            if out.get("bimodal_event"):
-                cat_sc = min(cat_sc * 1.25, 100.0)
-            out["catalyst_score"] = clamp(cat_sc)
+        # ------------------------------------------------------------------
+        # Catalyst sub-score (0-100)
+        # Weights reflect how reliably each catalyst produces a sharp move
+        # ------------------------------------------------------------------
+        cat_sc = 0.0
+        tags = out["catalyst_tags"]
+
+        # Earnings proximity: peak score 2 days before, decays fast after
+        if ed is not None:
+            if 0 <= ed <= 2:
+                cat_sc += 30.0   # imminent earnings = binary event
+            elif ed == 3:
+                cat_sc += 20.0
+            elif 4 <= ed <= 7:
+                cat_sc += 12.0
+            elif -1 <= ed < 0:
+                cat_sc += 15.0   # just reported, still in motion
+
+        if "fda" in tags:
+            cat_sc += 25.0       # FDA binary event, often explosive
+        if "buyout" in tags:
+            cat_sc += 25.0       # M&A premium = instant catalyst
+        if "partnership" in tags:
+            cat_sc += 15.0
+        if "legal" in tags:
+            cat_sc += 10.0       # verdict risk, can go either way
+        if "squeeze" in tags:
+            cat_sc += 10.0
+        if "breakout" in tags:
+            cat_sc += 8.0
+        if "geopolitical" in tags:
+            cat_sc += 6.0
+        if "rate" in tags:
+            cat_sc += 5.0
+        if "earnings" in tags and ed is None:
+            cat_sc += 8.0       # earnings headlines without a clear date
+
+        # Days-to-cover bonus: >= 5 days = serious squeeze setup
+        dtc = out["days_to_cover"]
+        if dtc and dtc >= 10:
+            cat_sc += 15.0
+        elif dtc and dtc >= 5:
+            cat_sc += 8.0
+
+        # Bimodal event multiplier: elevates catalyst score across the board
+        if out["bimodal_event"]:
+            cat_sc = min(cat_sc * 1.25, 100.0)
+
+        out["catalyst_score"] = clamp(cat_sc)
+
     except Exception:
         pass
-
-    _fill_fuel_from_screener_dump(out, ticker)
     return out
-
-
-def fetch_fuel(ticker: str, live: bool = False) -> dict:
-    """Fuel data: cache-first for presets; live chain on Refresh scan.
-
-    Live priority: Alpaca snapshot → yfinance → nightly screener dump → preset cache.
-    Cache mode (live=False): preset/GitHub nightly file only — no API calls.
-    """
-    if not live:
-        out = _empty_fuel_dict(ticker)
-        if _apply_seed_fuel(out, ticker):
-            return out
-    return _fetch_fuel_live(ticker)
-
-
-def _compute_fuel_score(s: dict, fuel: dict) -> None:
-    """Set fuel_score on signal dict from a fuel payload."""
-    spf = fuel.get("short_pct_float")
-    short_sc = clamp((spf or 0) * 100.0 / 20.0 * 100.0) if spf else 0.0
-    nb = fuel.get("insider_net_buy_usd", 0.0)
-    buys = fuel.get("insider_buys", 0)
-    if nb > 1_000_000:
-        ins_sc = 100.0
-    elif nb > 100_000:
-        ins_sc = 75.0
-    elif nb > 0 or buys > 0:
-        ins_sc = 50.0
-    elif nb < -1_000_000:
-        ins_sc = 0.0
-    else:
-        ins_sc = 20.0
-    nc = fuel.get("news_count_48h", 0)
-    ns = fuel.get("news_sentiment", 0)
-    news_sc = clamp(min(nc, 6) / 6.0 * 70.0 + max(ns, 0) * 10.0)
-    fl = fuel.get("float_shares")
-    if fl is None:
-        float_sc = 30.0
-    elif fl < 20e6:
-        float_sc = 100.0
-    elif fl < 50e6:
-        float_sc = 80.0
-    elif fl < 150e6:
-        float_sc = 60.0
-    elif fl < 500e6:
-        float_sc = 40.0
-    else:
-        float_sc = 20.0
-    h52 = fuel.get("high_52w")
-    px = s.get("price")
-    if h52 and px:
-        dist = (h52 - px) / h52 * 100.0
-        if dist <= 5:
-            h52_sc = 100.0
-        elif dist <= 15:
-            h52_sc = 70.0
-        elif dist <= 30:
-            h52_sc = 40.0
-        else:
-            h52_sc = 15.0
-    else:
-        h52_sc = 30.0
-    s["fuel_score"] = (
-        0.18 * short_sc + 0.18 * ins_sc + 0.18 * news_sc
-        + 0.08 * float_sc + 0.12 * h52_sc
-        + 0.26 * clamp(fuel.get("catalyst_score", 0.0))
-    )
-
-
-def _append_fuel_reasons(s: dict, fuel: dict) -> None:
-    spf = fuel.get("short_pct_float")
-    nb = fuel.get("insider_net_buy_usd", 0.0)
-    nc = fuel.get("news_count_48h", 0)
-    if spf and spf >= 0.15:
-        s["reasons"].append(f"short float {spf*100:.0f}%")
-    if nb > 0:
-        s["reasons"].append("insider buying")
-    if nc >= 2:
-        s["reasons"].append(f"{nc} headlines 48h")
-    tag_labels = {
-        "earnings": f"earnings in {fuel.get('earnings_days')}d" if fuel.get("earnings_days") is not None else "earnings news",
-        "fda": "FDA event", "legal": "legal catalyst", "buyout": "M&A/buyout",
-        "partnership": "partnership", "squeeze": "squeeze setup", "breakout": "breakout news",
-        "geopolitical": "geopolitical", "rate": "rate catalyst",
-    }
-    for tag in (fuel.get("catalyst_tags") or []):
-        label = tag_labels.get(tag)
-        if label:
-            s["reasons"].append(label)
-    if fuel.get("bimodal_event"):
-        s["reasons"].append("BIMODAL EVENT")
-    dtc = fuel.get("days_to_cover")
-    if dtc and dtc >= 10:
-        s["reasons"].append(f"squeeze extreme ({dtc}d)")
-    elif dtc and dtc >= 7:
-        s["reasons"].append(f"short fuel high ({dtc}d)")
-    elif dtc and dtc >= 5:
-        s["reasons"].append(f"short fuel mod ({dtc}d)")
-
-
-def compute_signals_from_fuel_cache(ticker: str) -> dict:
-    """Instant preset row from GitHub/local fuel cache — no live API scan."""
-    s = {
-        "ticker": ticker, "price": None, "chg_pct": None,
-        "rvol": 0.0, "surge": 0.0, "velocity": 0.0, "accel": 0.0,
-        "above_vwap": False, "vwap_cross": False, "new_hod": False,
-        "near_hod": False, "rsi5": None, "macd_cross": False,
-        "macd_bull": False, "ignition_score": 0.0, "fuel_score": 0.0,
-        "score": 0.0, "igniting": False, "gap_reversal": False,
-        "gap_pct": 0.0, "reasons": [], "error": None, "from_fuel_cache": True,
-    }
-    fuel = _empty_fuel_dict(ticker)
-    if not _apply_seed_fuel(fuel, ticker):
-        s["error"] = "no cache"
-        s["fuel"] = fuel
-        return s
-    s["fuel"] = fuel
-    px = fuel.get("_cache_price")
-    prev = fuel.get("_cache_prev_close")
-    if px is not None:
-        s["price"] = float(px)
-        if prev:
-            s["chg_pct"] = (float(px) / float(prev) - 1.0) * 100.0
-    s["ignition_score"] = 0.0
-    _compute_fuel_score(s, fuel)
-    s["score"] = 0.4 * s["fuel_score"]
-    s["reasons"].append("nightly cache — tap Refresh for live ignition")
-    _append_fuel_reasons(s, fuel)
-    return s
 
 
 # ----------------------------------------------------------------------------
 # Signal engine
 # ----------------------------------------------------------------------------
-def compute_signals(ticker: str, fuel_live: bool = False) -> dict:
+def compute_signals(ticker: str) -> dict:
     """Returns a dict of raw signals, sub-scores and the composite score."""
     s = {
         "ticker": ticker, "price": None, "chg_pct": None,
@@ -1615,7 +1127,7 @@ def compute_signals(ticker: str, fuel_live: bool = False) -> dict:
 
     m1, m5 = fetch_intraday(ticker)
     daily = fetch_daily(ticker)
-    fuel = fetch_fuel(ticker, live=fuel_live)
+    fuel = fetch_fuel(ticker)
     s["fuel"] = fuel
 
     if m1 is None or len(m1) < 6 or daily is None or len(daily) < 5:
@@ -1868,14 +1380,6 @@ st.sidebar.markdown("---")
 
 st.sidebar.markdown("<div class='sidebar-section'>Watchlist</div>", unsafe_allow_html=True)
 
-# ── Top-N results slider (defined early — used by all-presets caption) ─
-top_n = st.sidebar.slider(
-    "Results to show", 5, 30, 10,
-    help="How many stocks to display after the scan, ranked by Score. "
-         "Set to 5 to see only the hottest names, 30 for a full board. "
-         "Applies to all watchlist modes.",
-)
-
 # ── Scan ALL presets toggle ──────────────────────────────────────────
 all_presets_mode = st.sidebar.toggle(
     "Scan ALL presets",
@@ -1888,12 +1392,11 @@ all_presets_mode = st.sidebar.toggle(
 
 source = st.sidebar.radio(
     "Watchlist source",
-    ["Preset / Custom", "Scans over 5000 stocks"],
+    ["Preset / Custom", "Nightly Screener Top 10"],
     index=0,
     disabled=all_presets_mode,
     help="Preset / Custom: scan a hand-picked sector list. "
-         "Scans over 5000 stocks: uses your nightly screener dump to pre-rank "
-         "candidates from 5000+ stocks. "
+         "Nightly Screener Top 10: uses your nightly dump to pre-rank candidates. "
          "Disabled when Scan ALL presets is on.",
 )
 
@@ -1912,7 +1415,7 @@ if all_presets_mode:
         f"{len(PRESETS)} sectors (ETFs excluded). "
         f"Top {top_n} shown after scan."
     )
-elif source == "Scans over 5000 stocks":
+elif source == "Nightly Screener Top 10":
     screener_mode = True
     screener_url = st.sidebar.text_input("Dump URL", value=SCREENER_URL_DEFAULT)
     pool_size = st.sidebar.slider(
@@ -1967,6 +1470,14 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
 
+# ── Top-N results slider ─────────────────────────────────────────────
+top_n = st.sidebar.slider(
+    "Results to show", 5, 30, 10,
+    help="How many stocks to display after the scan, ranked by Score. "
+         "Set to 5 to see only the hottest names, 30 for a full board. "
+         "Applies to all watchlist modes.",
+)
+
 alert_threshold = st.sidebar.slider(
     "Alert score threshold", 40, 95, 65,
     help="A ticker triggers an alert (feed entry + phone push) the first time "
@@ -2002,16 +1513,6 @@ if alpaca_keys():
     st.sidebar.success("Data feed: Alpaca (real-time IEX)")
 else:
     st.sidebar.info("Data feed: Yahoo (may lag ~15 min). Add Alpaca keys in secrets for real-time.")
-
-# Load preset fuel cache once per session (before sidebar status panel).
-if "_fuel_cache_initialized" not in st.session_state:
-    _cache_bundle = initialize_preset_fuel_cache()
-    _seed_fuel_to_session(_cache_bundle["fuel"], _cache_bundle["meta"])
-    _warm_preset_scan_cache_from_fuel()
-
-# ── Preset fuel cache status (GitHub nightly + local refresh temp file) ─
-_render_fuel_cache_sidebar()
-
 st.sidebar.caption(
     "This tool detects momentum early; it does not predict the future. "
     "Not financial advice."
@@ -2025,7 +1526,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.6"
+APP_VERSION = "v3.3"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -2045,134 +1546,57 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ============================================================================
-# SCAN ENGINE
-# ============================================================================
-# Design principles:
-#   1. On first load or preset change → foreground scan → show results → done
-#   2. Cache stores results per preset key in session_state
-#   3. When switching presets → check cache first → serve instantly if found
-#   4. Refresh button → force rescan of current preset, update cache
-#   5. Background caching → runs AFTER main UI renders, via st.fragment
-#      so the leaderboard and analyzer are never blocked or interrupted
-# ============================================================================
+# ----------------------------------------------------------------------------
+# Scan — runs on first load, watchlist change, or Refresh button press
+# ----------------------------------------------------------------------------
 
-# ── Initialise persistent state ──────────────────────────────────────
-if "preset_cache_store" not in st.session_state:
-    st.session_state["preset_cache_store"] = {}
-if "bg_partial" not in st.session_state:
-    st.session_state["bg_partial"] = {}
-if "bg_scan_cursor" not in st.session_state:
-    st.session_state["bg_scan_cursor"] = {}
-
-# ── Determine active cache key ────────────────────────────────────────
-if all_presets_mode:
-    _active_cache_key = "__all_presets__"
-elif screener_mode:
-    _active_cache_key = "__screener__"
-elif preset and preset != "Custom":
-    _active_cache_key = f"preset_cache:{preset}"
-else:
-    _active_cache_key = "preset_cache:custom:" + ",".join(sorted(tickers))[:64]
-
+# Build a key representing current watchlist so we detect changes
 current_watchlist_key = ",".join(sorted(tickers))
 
-# ── Refresh button (must be defined before should_scan) ───────────────
+# Detect if the watchlist changed since last scan
+watchlist_changed = (
+    st.session_state.get("last_watchlist_key") != current_watchlist_key
+)
+
+# Refresh button (main area, above results)
 col_refresh, col_status = st.columns([1, 4])
 with col_refresh:
     refresh_clicked = st.button(
         "▶ Refresh scan",
         type="primary",
-        help="Download live intraday + fuel data (Alpaca → Yahoo → nightly dump), "
-             "rescan the watchlist, and update the local preset fuel cache.",
+        help="Run a fresh scan of the current watchlist right now.",
         use_container_width=True,
     )
 with col_status:
-    _status_slot = st.empty()
-
-# On-demand fuel-cache rows for presets (instant load, no live API scan).
-_cache = st.session_state["preset_cache_store"]
-if (
-    not refresh_clicked
-    and not screener_mode
-    and preset not in (None, "Custom")
-    and _active_cache_key not in _cache
-    and st.session_state.get("_seed_fuel")
-):
-    _cache[_active_cache_key] = [compute_signals_from_fuel_cache(t) for t in tickers]
-
-# Presets load from nightly fuel cache instantly; only Refresh triggers live APIs.
-should_scan = refresh_clicked or (
-    _active_cache_key not in _cache
-    and (
-        screener_mode
-        or preset == "Custom"
-        or (all_presets_mode and not st.session_state.get("_preset_scan_cache_warmed"))
-    )
-)
-
-# ── Foreground scan ───────────────────────────────────────────────────
-if should_scan:
-    if refresh_clicked:
-        _fetch_fuel_live.clear()
-        fetch_intraday.clear()
-        fetch_daily.clear()
-
-    _fuel_live = bool(refresh_clicked)
-    # Clear stale partials so background doesn't mix old data
-    st.session_state["bg_partial"].pop(_active_cache_key, None)
-    st.session_state["bg_scan_cursor"].pop(_active_cache_key, None)
-
-    _fg_progress = st.progress(0.0, text="")
-    _fg_label    = st.empty()
-    _n           = max(len(tickers), 1)
-    _fg_results  = []
-
-    for _i, _t in enumerate(tickers):
-        _fg_results.append(compute_signals(_t, fuel_live=_fuel_live))
-        _fg_progress.progress((_i + 1) / _n)
-        _fg_label.markdown(
-            f"<span style='color:#cc0000;font-family:Space Mono,monospace;"
-            f"font-size:13px;font-weight:500'>"
-            f"{'Refreshing' if _fuel_live else 'Scanning'} {_t}… ({_i + 1}/{len(tickers)})</span>",
+    scan_count = len(st.session_state.get("last_results", []))
+    if scan_count:
+        st.markdown(
+            f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
+            f"color:#7a9ab8'>{scan_count} tickers scanned</div>",
             unsafe_allow_html=True,
         )
 
-    _fg_progress.empty()
-    _fg_label.empty()
+should_scan = refresh_clicked or watchlist_changed or "last_results" not in st.session_state
 
-    # Persist
-    results = _fg_results
-    st.session_state["preset_cache_store"][_active_cache_key] = results
-    st.session_state["last_results"]       = results
-    st.session_state["last_scan_time"]     = datetime.now().strftime("%H:%M:%S")
+if should_scan:
+    results = []
+    progress = st.progress(0.0, text="")
+    _scan_label = st.empty()
+    for i, t in enumerate(tickers):
+        results.append(compute_signals(t))
+        progress.progress((i + 1) / max(len(tickers), 1))
+        _scan_label.markdown(
+            f"<span style='color:#cc0000;font-family:Space Mono,monospace;"
+            f"font-size:13px;font-weight:500'>Scanning {t}… ({i+1}/{len(tickers)})</span>",
+            unsafe_allow_html=True,
+        )
+    progress.empty()
+    _scan_label.empty()
+    st.session_state["last_results"] = results
+    st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
     st.session_state["last_watchlist_key"] = current_watchlist_key
-    if refresh_clicked:
-        _persist_live_fuel_cache(results)
-        _fetch_fuel_live.clear()
-    _scan_mode = "live refresh" if refresh_clicked else "live scan"
-    _status_slot.markdown(
-        f"<div style='padding:6px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#7a9ab8'>{len(results)} tickers · {_scan_mode}</div>",
-        unsafe_allow_html=True,
-    )
-
 else:
-    # ── Cache hit — serve instantly from fuel cache or prior live scan ──
-    results = _cache.get(_active_cache_key) or st.session_state.get("last_results") or []
-    _from_cache = results and results[0].get("from_fuel_cache")
-    _cache_lbl = "fuel cache" if _from_cache else "cached scan"
-    _status_slot.markdown(
-        f"<div style='padding:6px 0;font-family:Space Mono,monospace;font-size:12px;"
-        f"color:#7a9ab8'>{len(results)} tickers · {_cache_lbl}"
-        f"<span style='color:#1e3a5f'> · tap Refresh for live ignition</span></div>",
-        unsafe_allow_html=True,
-    )
-
-# ── Background-cache progress bar (rendered here, filled by fragment below) ──
-# This slot sits below the button row and is written by the fragment, not the
-# main script, so the main UI renders fully without waiting.
-_bg_progress_slot = st.empty()
+    results = st.session_state["last_results"]
 
 ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
@@ -3390,8 +2814,8 @@ with tab_lookup:
     if lk_ticker:
         # ── Step 1: Live ignition signals (Alpaca → Yahoo) ────────────
         with st.spinner(f"Running live ignition scan on {lk_ticker}…"):
-            lk_sig  = compute_signals(lk_ticker, fuel_live=bool(lk_run))
-            lk_fuel = fetch_fuel(lk_ticker, live=bool(lk_run))
+            lk_sig  = compute_signals(lk_ticker)
+            lk_fuel = fetch_fuel(lk_ticker)
             lk_sig["fuel"] = lk_fuel
 
         # ── Step 2: Deep fundamentals (Alpaca history + Yahoo + dump) ─
@@ -3768,112 +3192,6 @@ with tab_lookup:
                 st.markdown(full_cat, unsafe_allow_html=True)
 
 
-# ============================================================================
-# BACKGROUND PRESET CACHE FRAGMENT
-# ============================================================================
-# st.fragment lets this block rerun independently from the main script.
-# When run_every fires, only this fragment re-executes — the leaderboard,
-# stock analyzer, and all other UI stay completely frozen and usable.
-# The fragment writes to session_state which persists across main reruns.
-# ============================================================================
-
-@st.fragment(run_every=2)
-def _background_cache_worker():
-    """Caches remaining presets one batch at a time without touching main UI."""
-
-    # Only run background caching for normal preset mode
-    if st.session_state.get("_bg_mode_active") is not True:
-        return
-
-    _cs   = st.session_state.get("preset_cache_store", {})
-    _bp   = st.session_state.get("bg_partial", {})
-    _bk   = st.session_state.get("bg_scan_cursor", {})
-    _apn  = st.session_state.get("_bg_active_preset", "")
-
-    _total   = len(PRESETS)
-    _n_cached = sum(1 for n in PRESETS if f"preset_cache:{n}" in _cs)
-
-    # Find first uncached preset that isn't the active one
-    _pending = [
-        (name, tkrs)
-        for name, tkrs in PRESETS.items()
-        if f"preset_cache:{name}" not in _cs and name != _apn
-    ]
-
-    if not _pending:
-        # All done — render completion and stop self
-        st.markdown(
-            f"<div style='font-family:Space Mono,monospace;font-size:10px;"
-            f"color:#1e3a5f;padding:2px 0'>all {_total} presets cached ✓</div>",
-            unsafe_allow_html=True,
-        )
-        st.session_state["_bg_mode_active"] = False
-        return
-
-    _bg_name, _bg_tkrs_raw = _pending[0]
-    _bg_key     = f"preset_cache:{_bg_name}"
-    _bg_tickers = [t.strip().upper() for t in _bg_tkrs_raw.split(",") if t.strip()]
-    _cursor     = _bk.get(_bg_key, 0)
-
-    # Overall progress: fully-cached presets + fraction of current preset
-    _ticker_frac = _cursor / max(len(_bg_tickers), 1)
-    _pct = (_n_cached + _ticker_frac) / _total * 100
-    _bar_w = f"{min(_pct, 99):.1f}%"
-
-    # Render the mini bar inside the pre-allocated slot
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:8px;"
-        f"font-family:Space Mono,monospace;font-size:10px;color:#4a6a8a;"
-        f"padding:2px 0 2px'>"
-        f"<span style='white-space:nowrap;min-width:0'>"
-        f"background: {_bg_name} ({_n_cached}/{_total})</span>"
-        f"<div style='flex:1;background:#122540;border-radius:3px;"
-        f"height:4px;min-width:60px;overflow:hidden'>"
-        f"<div style='width:{_bar_w};height:100%;background:#f5a623;"
-        f"border-radius:3px'></div></div></div>",
-        unsafe_allow_html=True,
-    )
-
-    # Scan one batch of tickers
-    _BATCH     = 5
-    _batch_end = min(_cursor + _BATCH, len(_bg_tickers))
-    _partial   = list(_bp.get(_bg_key, []))
-
-    for _t in _bg_tickers[_cursor:_batch_end]:
-        _partial.append(compute_signals(_t))
-
-    if _batch_end >= len(_bg_tickers):
-        # Preset complete
-        _cs[_bg_key] = _partial
-        _bp.pop(_bg_key, None)
-        _bk.pop(_bg_key, None)
-    else:
-        _bp[_bg_key] = _partial
-        _bk[_bg_key] = _batch_end
-
-    # Write back — these persist across the next main-script rerun
-    st.session_state["preset_cache_store"] = _cs
-    st.session_state["bg_partial"]         = _bp
-    st.session_state["bg_scan_cursor"]     = _bk
-
-
-# ── Activate background worker only when appropriate ─────────────────
-# Set the flag before calling the fragment so it reads the right values.
-_run_bg = (
-    not st.session_state.get("_preset_scan_cache_warmed")
-    and not all_presets_mode
-    and not screener_mode
-    and preset not in (None, "Custom")
-    and any(
-        f"preset_cache:{n}" not in st.session_state["preset_cache_store"]
-        for n in PRESETS
-    )
-)
-st.session_state["_bg_mode_active"]    = _run_bg
-st.session_state["_bg_active_preset"]  = preset or ""
-
-# Render the fragment into the pre-allocated slot
-with _bg_progress_slot:
-    _background_cache_worker()
-
-# ── Auto-refresh stub (removed — background fragment handles it) ──────
+# Auto refresh
+# ----------------------------------------------------------------------------
+# Auto-refresh removed: scan runs on demand via Refresh button only.
