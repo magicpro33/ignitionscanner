@@ -1526,7 +1526,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.2"
+APP_VERSION = "v3.3"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -2375,37 +2375,51 @@ else:
 
     info, hist = fetch_analyzer(az_ticker)
 
-    # ── Parse core fields ────────────────────────────────────────────
+    # ── Merge fetch_fuel into info (both hit yfinance separately; when one is
+    # rate-limited the other may succeed — merging guarantees best available data)
+    az_fuel = scan_r["fuel"] if scan_r else fetch_fuel(az_ticker)
+    _AZ_FUEL_MAP = {
+        "short_pct_float": "shortPercentOfFloat", "float_shares": "floatShares",
+        "high_52w": "fiftyTwoWeekHigh", "days_to_cover": "shortRatio",
+        "target_mean": "targetMeanPrice", "sector": "sector", "name": "shortName",
+    }
+    for fk, ik in _AZ_FUEL_MAP.items():
+        fv = az_fuel.get(fk)
+        if fv is not None and fv != "" and not info.get(ik):
+            info[ik] = fv
+
+    # ── Parse core fields with multi-source fallbacks ─────────────────
     px    = float(info.get("currentPrice") or info.get("regularMarketPrice") or
-                  info.get("previousClose") or 0)
-    name  = info.get("shortName") or info.get("longName") or az_ticker
-    sec   = info.get("sector") or "Unknown"
-    ind   = info.get("industry") or "Unknown"
-    mcap  = info.get("marketCap") or 0
+                  info.get("previousClose") or
+                  (scan_r["price"] if scan_r and scan_r.get("price") else 0) or 0)
+    name  = info.get("shortName") or info.get("longName") or az_fuel.get("name") or az_ticker
+    sec   = info.get("sector")   or az_fuel.get("sector") or ""
+    ind   = info.get("industry") or ""
+    sec_display = f"{sec} / {ind}" if (sec and ind) else (sec or ind or "--")
+    mcap  = info.get("marketCap")
     pe    = info.get("trailingPE")
     fwpe  = info.get("forwardPE")
     pb    = info.get("priceToBook")
     ps    = info.get("priceToSalesTrailing12Months")
     beta  = info.get("beta")
-    hi52  = info.get("fiftyTwoWeekHigh") or 0
+    hi52  = info.get("fiftyTwoWeekHigh") or az_fuel.get("high_52w") or 0
     lo52  = info.get("fiftyTwoWeekLow") or 0
-    spf   = info.get("shortPercentOfFloat")
-    sratio= info.get("shortRatio")
-    am    = info.get("targetMeanPrice")
-    al    = info.get("targetLowPrice")
-    ahigh = info.get("targetHighPrice")
+    spf   = info.get("shortPercentOfFloat") or az_fuel.get("short_pct_float")
+    sratio= info.get("shortRatio") or az_fuel.get("days_to_cover")
+    am    = info.get("targetMeanPrice") or az_fuel.get("target_mean")
+    al    = info.get("targetLowPrice");  ahigh = info.get("targetHighPrice")
     nana  = info.get("numberOfAnalystOpinions") or 0
     recky = info.get("recommendationKey") or ""
-    rg    = info.get("revenueGrowth")
-    eg    = info.get("earningsGrowth")
-    pm    = info.get("profitMargins")
-    om    = info.get("operatingMargins")
-    roe   = info.get("returnOnEquity")
-    roa   = info.get("returnOnAssets")
-    deq   = info.get("debtToEquity")
-    cr    = info.get("currentRatio")
-    fl    = info.get("floatShares")
-    aus   = ((am - px) / px * 100) if (am and px > 0) else None
+    rg    = info.get("revenueGrowth");   eg  = info.get("earningsGrowth")
+    pm    = info.get("profitMargins");   om  = info.get("operatingMargins")
+    roe   = info.get("returnOnEquity");  roa = info.get("returnOnAssets")
+    deq   = info.get("debtToEquity");    cr  = info.get("currentRatio")
+    fl    = info.get("floatShares") or az_fuel.get("float_shares")
+    inst_pct = az_fuel.get("inst_pct")
+    ins_buys = az_fuel.get("insider_buys", 0)
+    ins_net  = az_fuel.get("insider_net_buy_usd", 0.0)
+    news_cnt = az_fuel.get("news_count_48h", 0)
+    aus   = ((am - px) / px * 100) if (am and px and px > 0) else None
     rng52 = ((px - lo52) / (hi52 - lo52) * 100) if (hi52 and lo52 and hi52 != lo52) else None
 
     # ── Technicals from history ──────────────────────────────────────
@@ -2413,7 +2427,7 @@ else:
     pct1d = pct5d = pct1m = pct3m = atr = None
     bb_upper = bb_mid = bb_lower = None
 
-    if not hist.empty and len(hist) >= 26:
+    if not hist.empty and len(hist) >= 35:  # MACD needs 26+9=35 minimum
         cl = hist["Close"].dropna()
         vl = hist["Volume"].dropna()
         try:
@@ -2433,7 +2447,13 @@ else:
             if len(cl) >= 200: ma200_v = float(cl.rolling(200).mean().iloc[-1])
         except Exception: pass
         try:
-            if len(vl) >= 20: vol_avg = float(vl.iloc[-20:].mean()); vol_td = float(vl.iloc[-1])
+            if len(vl) >= 21:
+                vol_avg = float(vl.iloc[-21:-1].mean())  # exclude today's partial bar
+                # Derive today's vol from RVOL scan signal to avoid false 'Low' mid-day
+                if scan_r and scan_r.get("rvol") and vol_avg > 0:
+                    vol_td = vol_avg * scan_r["rvol"] * expected_vol_fraction(390)
+                else:
+                    vol_td = None
         except Exception: pass
         try:
             if len(cl) >= 2:  pct1d = (float(cl.iloc[-1]) - float(cl.iloc[-2])) / float(cl.iloc[-2]) * 100
@@ -2481,7 +2501,10 @@ else:
         if vol_td > vol_avg * 1.5: pills_html += az_pill("High Volume", True)
         elif vol_td < vol_avg * 0.5: pills_html += az_pill("Low Volume", None)
     if spf and spf > 0.15: pills_html += az_pill("High Short Interest", None)
-    if aus and aus > 15: pills_html += az_pill(f"Analyst Upside {aus:.0f}%", True)
+    if aus is not None and aus > 15:
+        pills_html += az_pill(f"Analyst Upside {aus:.0f}%", True)
+    elif aus is not None and aus < -10:
+        pills_html += az_pill(f"Above Target {aus:.0f}%", False)
     if scan_r and scan_r.get("igniting"): pills_html += az_pill("IGNITING NOW", True)
     if scan_r and scan_r.get("gap_reversal"): pills_html += az_pill("GAP REVERSAL", False)
     if scan_r and scan_r.get("new_hod"): pills_html += az_pill("New HOD", True)
@@ -2498,7 +2521,7 @@ else:
     st.markdown(
         f"<div style='margin:6px 0 4px;font-family:Plus Jakarta Sans,sans-serif'>"
         f"<strong style='color:#ffffff'>{name}</strong>"
-        f"  <span style='color:#7a9ab8;font-size:13px'>{sec} / {ind}</span></div>",
+        f"  <span style='color:#7a9ab8;font-size:13px'>{sec_display}</span></div>",
         unsafe_allow_html=True,
     )
     if pills_html:
@@ -2618,19 +2641,28 @@ else:
 
         az_section("Short Interest & Growth")
         si_rows = []
-        if spf:
-            si_rows.append(mrow("Short % Float", "% of float sold short. Above 15% = heavy bets against. Above 20% = squeeze setup.", az_tag(spf * 100, 20, 10, "{:.1f}", "%")))
-        if sratio:
-            si_rows.append(mrow("Days to Cover", "Short interest / avg volume. How many days for shorts to exit. High = squeeze fuel.", az_tag(sratio, 5, 3, "{:.1f}", "d")))
-        if rg:
-            si_rows.append(mrow("Revenue Growth", "YoY revenue growth. Foundation of long-term stock appreciation.", az_tag(rg * 100, 10, 3, "{:.1f}", "%")))
-        if eg:
-            si_rows.append(mrow("Earnings Growth", "YoY EPS growth. Earnings growing faster than revenue = increasing efficiency.", az_tag(eg * 100, 10, 3, "{:.1f}", "%")))
+        if spf is not None:
+            si_rows.append(mrow("Short % Float",  "% of float sold short. 15%+ = squeeze fuel if price runs.",          az_tag(spf * 100, 20, 10, "{:.1f}", "%")))
+        if sratio is not None:
+            si_rows.append(mrow("Days to Cover",   "Shares short / avg vol. High = forced shorts if price rises.",        az_tag(sratio, 5, 3, "{:.1f}", "d")))
+        if ins_buys > 0:
+            ins_col = "#4dd880" if ins_net > 0 else "#ff4444"
+            si_rows.append(mrow("Insider Buying",  "Net insider buys last 90d (SEC Form 4).", f"<span style='font-family:Space Mono,monospace;color:{ins_col}'>{ins_buys} buys · ${ins_net/1e3:.0f}K net</span>"))
+        elif ins_net < 0:
+            si_rows.append(mrow("Insider Activity","Net insider selling last 90d.", "<span style='font-family:Space Mono,monospace;color:#ff4444'>net selling</span>"))
+        if news_cnt:
+            si_rows.append(mrow("News 48h",        "Headlines in last 48 hours. Momentum needs a catalyst.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{news_cnt} headlines</span>"))
+        if rg is not None:
+            si_rows.append(mrow("Revenue Growth",  "YoY revenue growth. Double-digit = attractive to institutions.",      az_tag(rg * 100, 10, 3, "{:.1f}", "%")))
+        if eg is not None:
+            si_rows.append(mrow("Earnings Growth", "YoY EPS growth. Growing faster than revenue = margin expansion.",     az_tag(eg * 100, 10, 3, "{:.1f}", "%")))
         if fuel_sc is not None:
             fc = "#4dd880" if fuel_sc >= 70 else ("#d0b040" if fuel_sc >= 50 else "#4a6a8a")
-            si_rows.append(mrow("Fuel Score", "Primed-to-move score: short float, insider buying, news, float size, 52W position (0-100).", f"<span style='color:{fc};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{fuel_sc:.0f}</span>"))
+            si_rows.append(mrow("Fuel Score", "Primed-to-move score (0-100).", f"<span style='color:{fc};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{fuel_sc:.0f}</span>"))
         if si_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(si_rows)}</tbody></table>", unsafe_allow_html=True)
+        else:
+            st.caption("Short interest data unavailable for this ticker.")
 
         az_section("Live Signals")
         if reasons:
@@ -2648,7 +2680,7 @@ else:
     with colC:
         az_section("Valuation")
         val_rows = []
-        if mcap:
+        if mcap is not None:
             mc_str = f"${mcap/1e9:.2f}B" if mcap >= 1e9 else f"${mcap/1e6:.1f}M"
             val_rows.append(mrow("Market Cap", "Total market value = share price × shares outstanding. Determines if this is micro/small/mid/large cap.", mc_str))
         if pe is not None:
@@ -2661,11 +2693,15 @@ else:
             val_rows.append(mrow("P/S Ratio", "Price-to-Sales. Below 2x = reasonable. Above 10x = high growth premium.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{ps:.2f}x</span>"))
         if beta is not None:
             val_rows.append(mrow("Beta", "Volatility vs S&P 500. 1.0 = market. 1.5 = 50% more volatile. Under 0.6 = defensive.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{beta:.2f}</span>"))
-        if fl:
+        if fl is not None:
             fl_str = f"{fl/1e9:.2f}B" if fl >= 1e9 else f"{fl/1e6:.0f}M"
-            val_rows.append(mrow("Float", "Tradeable shares outstanding. Smaller float = more explosive moves on volume.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
+            val_rows.append(mrow("Float", "Tradeable shares. <20M = explosive on volume.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{fl_str}</span>"))
+        if inst_pct is not None:
+            val_rows.append(mrow("Institutional", "% held by institutions.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{inst_pct:.1f}%</span>"))
         if val_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
+        else:
+            st.caption("Valuation data unavailable — yfinance may be rate-limited. Try again shortly.")
 
         az_section("Financial Health")
         hlth_rows = []
@@ -2673,9 +2709,9 @@ else:
         if om  is not None: hlth_rows.append(mrow("Operating Margin", "EBIT / revenue. Core business efficiency before interest and taxes.", az_tag(om * 100, 15, 5, "{:.1f}", "%")))
         if roe is not None: hlth_rows.append(mrow("Return on Equity", "Net income / shareholders equity. Above 15% = strong.", az_tag(roe * 100, 15, 8, "{:.1f}", "%")))
         if roa is not None: hlth_rows.append(mrow("Return on Assets", "Net income / total assets. Above 5% = solid.", az_tag(roa * 100, 8, 3, "{:.1f}", "%")))
-        if deq:
+        if deq is not None:
             hlth_rows.append(mrow("D/E Ratio", "Total debt / equity. High D/E amplifies gains and losses. Capital-intensive sectors carry more.", f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{deq:.1f}%</span>"))
-        if cr:
+        if cr is not None:
             hlth_rows.append(mrow("Current Ratio", "Current assets / current liabilities. Above 1.5 = comfortable. Below 1.0 = short-term risk.", az_tag(cr, 1.5, 1.0, "{:.2f}")))
         if hlth_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(hlth_rows)}</tbody></table>", unsafe_allow_html=True)
