@@ -1380,6 +1380,13 @@ st.sidebar.markdown("---")
 
 st.sidebar.markdown("<div class='sidebar-section'>Watchlist</div>", unsafe_allow_html=True)
 
+# ── Top-N results slider (defined here — used by all watchlist modes) ──
+top_n = st.sidebar.slider(
+    "Results to show", 5, 30, 10,
+    help="How many stocks to display after the scan, ranked by Score. "
+         "Set to 5 for the hottest only, 30 for a full board.",
+)
+
 # ── Scan ALL presets toggle ──────────────────────────────────────────
 all_presets_mode = st.sidebar.toggle(
     "Scan ALL presets",
@@ -1415,7 +1422,7 @@ if all_presets_mode:
         f"{len(PRESETS)} sectors (ETFs excluded). "
         f"Top {top_n} shown after scan."
     )
-elif source == "Nightly Screener Top 10":
+elif source == "Scan over 5000 stocks":
     screener_mode = True
     screener_url = st.sidebar.text_input("Dump URL", value=SCREENER_URL_DEFAULT)
     pool_size = st.sidebar.slider(
@@ -1470,13 +1477,7 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.markdown("<div class='sidebar-section'>Scanner controls</div>", unsafe_allow_html=True)
 
-# ── Top-N results slider ─────────────────────────────────────────────
-top_n = st.sidebar.slider(
-    "Results to show", 5, 30, 10,
-    help="How many stocks to display after the scan, ranked by Score. "
-         "Set to 5 to see only the hottest names, 30 for a full board. "
-         "Applies to all watchlist modes.",
-)
+# top_n defined earlier in Watchlist section
 
 alert_threshold = st.sidebar.slider(
     "Alert score threshold", 40, 95, 65,
@@ -1526,7 +1527,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.3"
+APP_VERSION = "v3.4"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
