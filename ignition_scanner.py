@@ -339,8 +339,8 @@ PRESETS = {
     ),
     "Defense / Aerospace / Space": (
         "NOC,LMT,RTX,AVAV,ASTS,RKLB,RDW,LASR,SKYT,"
-        "MOGA,PKE,LPTH,XAR,ITA,KDEF,ATRO,MRCY,VSAT,"
-        "SPCX,BBAI,AIPO,PLTR,SYM,TER,EWY"
+        "MOG.A,PKE,LPTH,LHX,GD,HII,ATRO,MRCY,VSAT,"
+        "SPCX,BBAI,BKSY,PLTR,SYM,TER,HEI"
     ),
     "Semiconductors / Technology": (
         "AMD,MU,TSM,TSEM,INTC,SWKS,QRVO,SNXX,"
@@ -359,9 +359,9 @@ PRESETS = {
         "VICR,XTN,XLI,NEWT,KFRC,OXM,EPC,DBI,GIS,KMB"
     ),
     "Income / Dividends / ETFs": (
-        "JEPI,QYLD,SPHD,SRET,DIV,KBWD,PGX,GLAD,AGD,"
-        "OTF,FSK,ITUB,OCCI,LTC,SPY,IWM,XLF,XLY,VEU,"
-        "VT,VTI,VOO,VUG,VXUS,MAGS,ARKK,BWET,STNG,DTCR,FCG"
+        "T,VZ,MO,PM,BTI,ENB,ET,EPD,GLAD,AGD,"
+        "OTF,FSK,ITUB,OCCI,LTC,O,MAIN,ARCC,NLY,AGNC,"
+        "BWET,STNG,DTCR,SEA,TX,STNG,OXLC,PFLT,CSWC,GAIN,HTGC"
     ),
     "Critical Minerals / Materials": (
         "ALB,LAC,TMQ,MP,CRML,USAR,CMP,CGAU,AA,CENX,"
@@ -2375,6 +2375,13 @@ else:
 
     info, hist = fetch_analyzer(az_ticker)
 
+    # ── Resolve scan result first — needed for fuel merge and px fallback ───
+    scan_r  = next((r for r in ok if r["ticker"] == az_ticker), None)
+    ign_sc  = scan_r["ignition_score"] if scan_r else None
+    fuel_sc = scan_r["fuel_score"]     if scan_r else None
+    rvol    = scan_r["rvol"]           if scan_r else None
+    reasons = scan_r.get("reasons", []) if scan_r else []
+
     # ── Merge fetch_fuel into info (both hit yfinance separately; when one is
     # rate-limited the other may succeed — merging guarantees best available data)
     az_fuel = scan_r["fuel"] if scan_r else fetch_fuel(az_ticker)
@@ -2478,13 +2485,6 @@ else:
                 bb_upper = float((bm + 2 * bstd).iloc[-1])
                 bb_lower = float((bm - 2 * bstd).iloc[-1])
         except Exception: pass
-
-    # ── Scan result for this ticker ──────────────────────────────────
-    scan_r = next((r for r in ok if r["ticker"] == az_ticker), None)
-    ign_sc = scan_r["ignition_score"] if scan_r else None
-    fuel_sc = scan_r["fuel_score"] if scan_r else None
-    rvol = scan_r["rvol"] if scan_r else None
-    reasons = scan_r.get("reasons", []) if scan_r else []
 
     # ── Signal pills ─────────────────────────────────────────────────
     pills_html = ""
