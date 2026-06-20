@@ -703,6 +703,54 @@ SCREENER_URL_DEFAULT = (
     "https://raw.githubusercontent.com/magicpro33/stock/main/data/stock_data.json.gz"
 )
 
+# Pre-seeded fuel cache generated nightly by GitHub Actions (seed/seed_cache.py).
+# Contains fundamentals, news, catalysts for every ticker in every preset.
+# The app loads this ONCE on startup and uses it to instantly populate the
+# fuel cache — so switching presets is instant on first load.
+PRESET_FUEL_CACHE_URL = (
+    "https://raw.githubusercontent.com/magicpro33/ignitionscanner/main/data/preset_fuel_cache.json.gz"
+)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_preset_fuel_cache(url: str = PRESET_FUEL_CACHE_URL) -> dict:
+    """Download and parse the nightly pre-seeded fuel cache.
+
+    Returns a dict:  { ticker_upper: fuel_dict }
+    Returns {}       if the file is missing or fails to parse (safe fallback).
+    The TTL is 1 hour so it auto-refreshes during the day without a restart.
+    """
+    try:
+        resp = requests.get(url, timeout=20, stream=True)
+        if resp.status_code == 404:
+            return {}   # file not yet committed — first-run silent fallback
+        resp.raise_for_status()
+        raw = gzip.decompress(resp.content)
+        data = json.loads(raw.decode("utf-8"))
+        fuel_map = data.get("fuel", {})
+        # Normalise: return { "TICKER": fuel_dict } with uppercase keys
+        return {k.upper(): v for k, v in fuel_map.items()}
+    except Exception:
+        return {}   # always safe — app falls back to live yfinance
+
+
+def _seed_fuel_to_cache(fuel_map: dict) -> None:
+    """Merge the pre-seeded fuel map into fetch_fuel's Streamlit cache.
+
+    We call fetch_fuel.clear() is NOT what we want — that would lose live data.
+    Instead we pre-populate session_state so the first render of each preset
+    can use seeded data, and live scans overwrite it as they complete.
+
+    The seeded fuel dict keys match exactly what fetch_fuel returns, so
+    the app treats them identically.
+    """
+    if not fuel_map:
+        return
+    if "_seed_fuel_loaded" not in st.session_state:
+        st.session_state["_seed_fuel"] = fuel_map
+        st.session_state["_seed_fuel_loaded"] = True
+
+
 
 def _strip_heavy(d: dict) -> dict:
     """object_hook: drop numeric/scalar arrays (OHLC history blobs) as each
@@ -896,7 +944,13 @@ def sector_allows(catalyst: str, sector: str) -> bool:
 def fetch_fuel(ticker: str) -> dict:
     """Slow-moving 'primed to move' data: short interest, float,
     insider transactions, news, 52-week levels, earnings date,
-    sector, institutional ownership, and full catalyst detection."""
+    sector, institutional ownership, and full catalyst detection.
+
+    Data priority:
+      1. Pre-seeded fuel cache (GitHub Actions nightly, loaded on startup)
+      2. Live yfinance call (always runs to get fresh news + override stale seed)
+      The seed provides instant data; the live call refreshes it.
+    """
     out = {
         # existing
         "short_pct_float": None, "float_shares": None,
@@ -914,6 +968,21 @@ def fetch_fuel(ticker: str) -> dict:
         "bimodal_event": False,      # binary event within ±3 days
         "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
     }
+
+    # ── Tier 1: Pre-seeded fuel cache ────────────────────────────────
+    # Instantly fills stable fields (sector, float, targets, short data).
+    # Live yfinance call below will override with fresher values where possible.
+    _seed = st.session_state.get("_seed_fuel", {})
+    if ticker.upper() in _seed:
+        _sf = _seed[ticker.upper()]
+        for _k in ["short_pct_float", "float_shares", "days_to_cover",
+                   "inst_pct", "high_52w", "name", "sector", "target_mean",
+                   "insider_buys", "insider_sells", "insider_net_buy_usd",
+                   "earnings_days", "catalyst_tags", "catalyst_suppressed",
+                   "catalyst_score", "bimodal_event"]:
+            if _sf.get(_k) is not None and _sf[_k] != "" and _sf[_k] != []:
+                out[_k] = _sf[_k]
+    # ── Tier 2: Live yfinance (always runs, overrides stale seed) ────
     try:
         tk = yf.Ticker(ticker)
         info = {}
@@ -1523,6 +1592,14 @@ if "alerts" not in st.session_state:
     st.session_state.alerts = []
 if "alerted" not in st.session_state:
     st.session_state.alerted = set()
+
+# ── Load pre-seeded fuel cache from GitHub Actions nightly run ───────
+# This runs once per server session. The seed provides instant fuel data
+# (fundamentals, catalysts, short interest) for all preset tickers so
+# the first scan shows full data without waiting for yfinance calls.
+# fetch_fuel() reads from this seed first, then overrides with live data.
+_seed_fuel_map = load_preset_fuel_cache()
+_seed_fuel_to_cache(_seed_fuel_map)
 
 # ----------------------------------------------------------------------------
 # Header
