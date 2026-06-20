@@ -1392,11 +1392,12 @@ all_presets_mode = st.sidebar.toggle(
 
 source = st.sidebar.radio(
     "Watchlist source",
-    ["Preset / Custom", "Nightly Screener Top 10"],
+    ["Preset / Custom", "Scans over 5000 stocks"],
     index=0,
     disabled=all_presets_mode,
     help="Preset / Custom: scan a hand-picked sector list. "
-         "Nightly Screener Top 10: uses your nightly dump to pre-rank candidates. "
+         "Scans over 5000 stocks: uses your nightly screener dump to pre-rank "
+         "candidates from 5000+ stocks. "
          "Disabled when Scan ALL presets is on.",
 )
 
@@ -1415,7 +1416,7 @@ if all_presets_mode:
         f"{len(PRESETS)} sectors (ETFs excluded). "
         f"Top {top_n} shown after scan."
     )
-elif source == "Nightly Screener Top 10":
+elif source == "Scans over 5000 stocks":
     screener_mode = True
     screener_url = st.sidebar.text_input("Dump URL", value=SCREENER_URL_DEFAULT)
     pool_size = st.sidebar.slider(
@@ -1526,7 +1527,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.3"
+APP_VERSION = "v3.4"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -1547,37 +1548,57 @@ st.markdown(
 )
 
 # ----------------------------------------------------------------------------
-# Scan — runs on first load, watchlist change, or Refresh button press
+# Scan — current preset loads first; all other presets pre-cache in background
 # ----------------------------------------------------------------------------
 
-# Build a key representing current watchlist so we detect changes
-current_watchlist_key = ",".join(sorted(tickers))
+# Each preset's results are cached individually in session_state under
+# "preset_cache:<preset_name>" so switching presets is instant after first load.
+# The active preset is always scanned/refreshed first; background caching fills
+# the rest without blocking the UI.
 
-# Detect if the watchlist changed since last scan
+current_watchlist_key = ",".join(sorted(tickers))
 watchlist_changed = (
     st.session_state.get("last_watchlist_key") != current_watchlist_key
 )
 
-# Refresh button (main area, above results)
+# Active preset cache key
+if all_presets_mode:
+    _active_cache_key = "__all_presets__"
+elif screener_mode:
+    _active_cache_key = "__screener__"
+else:
+    _active_cache_key = f"preset_cache:{preset}"
+
+# Refresh button
 col_refresh, col_status = st.columns([1, 4])
 with col_refresh:
     refresh_clicked = st.button(
         "▶ Refresh scan",
         type="primary",
-        help="Run a fresh scan of the current watchlist right now.",
+        help="Rescan the current preset and update its cache.",
         use_container_width=True,
     )
 with col_status:
     scan_count = len(st.session_state.get("last_results", []))
+    _status_slot = st.empty()
     if scan_count:
-        st.markdown(
+        _status_slot.markdown(
             f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
             f"color:#7a9ab8'>{scan_count} tickers scanned</div>",
             unsafe_allow_html=True,
         )
 
-should_scan = refresh_clicked or watchlist_changed or "last_results" not in st.session_state
+# Tiny background-cache progress bar — lives right below the status line
+_bg_bar_slot = st.empty()
 
+should_scan = (
+    refresh_clicked
+    or watchlist_changed
+    or "last_results" not in st.session_state
+    or _active_cache_key not in st.session_state.get("preset_cache_store", {})
+)
+
+# ── Foreground scan (current preset) ─────────────────────────────────
 if should_scan:
     results = []
     progress = st.progress(0.0, text="")
@@ -1592,11 +1613,98 @@ if should_scan:
         )
     progress.empty()
     _scan_label.empty()
+
+    # Store in both last_results and the per-preset cache
     st.session_state["last_results"] = results
     st.session_state["last_scan_time"] = datetime.now().strftime("%H:%M:%S")
     st.session_state["last_watchlist_key"] = current_watchlist_key
+    if "preset_cache_store" not in st.session_state:
+        st.session_state["preset_cache_store"] = {}
+    st.session_state["preset_cache_store"][_active_cache_key] = results
+
+    # Update status count
+    _status_slot.markdown(
+        f"<div style='padding:8px 0;font-family:Space Mono,monospace;font-size:12px;"
+        f"color:#7a9ab8'>{len(results)} tickers scanned</div>",
+        unsafe_allow_html=True,
+    )
 else:
-    results = st.session_state["last_results"]
+    # Serve from per-preset cache — instant
+    results = (
+        st.session_state["preset_cache_store"].get(_active_cache_key)
+        or st.session_state["last_results"]
+    )
+
+# ── Background pre-cache (all other presets, one ticker at a time) ───
+# Only runs when the current preset was already served from cache (no scan)
+# and there are still uncached presets.  Uses a single Streamlit rerun
+# loop iteration so it never blocks the UI render.
+if not should_scan and not all_presets_mode and not screener_mode:
+    _cache_store = st.session_state.get("preset_cache_store", {})
+    _uncached = [
+        (name, tkrs) for name, tkrs in PRESETS.items()
+        if f"preset_cache:{name}" not in _cache_store
+        and name != preset  # active preset already done
+    ]
+    if _uncached:
+        _bg_name, _bg_tkrs_raw = _uncached[0]
+        _bg_tickers = [t.strip().upper() for t in _bg_tkrs_raw.split(",") if t.strip()]
+        _bg_key = f"preset_cache:{_bg_name}"
+        _bg_done = st.session_state.get("bg_scan_cursor", {})
+        _cursor = _bg_done.get(_bg_key, 0)
+
+        # How many presets are fully cached
+        _total_presets  = len(PRESETS)
+        _cached_presets = sum(
+            1 for n in PRESETS if f"preset_cache:{n}" in _cache_store
+        )
+        _bg_pct = _cached_presets / _total_presets
+
+        # Show mini progress bar only while background work remains
+        _bg_bar_slot.markdown(
+            f"<div style='margin:2px 0 6px'>"
+            f"<div style='display:flex;align-items:center;gap:8px'>"
+            f"<div style='font-family:Space Mono,monospace;font-size:10px;"
+            f"color:#4a6a8a;white-space:nowrap'>"
+            f"caching {_bg_name} ({_cached_presets}/{_total_presets})</div>"
+            f"<div style='flex:1;background:#122540;border-radius:3px;height:3px;"
+            f"overflow:hidden'>"
+            f"<div style='width:{_bg_pct*100:.0f}%;height:100%;background:#1e3a5f;"
+            f"border-radius:3px'></div></div></div></div>",
+            unsafe_allow_html=True,
+        )
+
+        # Scan a batch of tickers from this preset each rerun (non-blocking)
+        BATCH = 5
+        _batch_end  = min(_cursor + BATCH, len(_bg_tickers))
+        _bg_results = list(st.session_state.get("bg_partial", {}).get(_bg_key, []))
+        for _t in _bg_tickers[_cursor:_batch_end]:
+            _bg_results.append(compute_signals(_t))
+
+        if "bg_partial" not in st.session_state:
+            st.session_state["bg_partial"] = {}
+        st.session_state["bg_partial"][_bg_key] = _bg_results
+
+        if _batch_end >= len(_bg_tickers):
+            # Preset fully scanned — move to cache
+            _cache_store[_bg_key] = _bg_results
+            st.session_state["preset_cache_store"] = _cache_store
+            if _bg_key in st.session_state.get("bg_partial", {}):
+                del st.session_state["bg_partial"][_bg_key]
+            if "bg_scan_cursor" in st.session_state:
+                st.session_state["bg_scan_cursor"].pop(_bg_key, None)
+        else:
+            if "bg_scan_cursor" not in st.session_state:
+                st.session_state["bg_scan_cursor"] = {}
+            st.session_state["bg_scan_cursor"][_bg_key] = _batch_end
+
+        # Trigger next batch on next rerun (only if there's more to do)
+        if _uncached:
+            time.sleep(0.05)  # tiny yield so Streamlit renders the frame first
+            st.rerun()
+    else:
+        # All presets cached — show a dim "all cached" indicator briefly
+        pass
 
 ok = [r for r in results if not r.get("error")]
 failed = [r["ticker"] for r in results if r.get("error")]
