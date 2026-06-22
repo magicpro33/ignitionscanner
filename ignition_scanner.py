@@ -165,6 +165,7 @@ h1, h2, h3 { font-family: 'Rajdhani', sans-serif !important;
 .ct-geopolitical { background:#0d1020; border-color:#3a5090; color:#7090d0; }
 .ct-rate         { background:#1a1500; border-color:#907020; color:#d0b040; }
 .ct-bimodal      { background:#221800; border-color:#f5a623; color:#f5a623; }
+.ct-earn-growth  { background:#071a10; border-color:#1e8a3a; color:#4dd880; }
 .ct-dtc          { background:#0a1828; border-color:#1e4a7a; color:#5090d0; }
 
 /* ── DTC fuel gauge pill ──────────────────────────────────────────── */
@@ -429,6 +430,10 @@ CATALYST_KEYWORDS = {
     "rate":        ["fed", "federal reserve", "interest rate", "rate hike",
                     "rate cut", "fomc", "powell", "inflation", "cpi", "ppi",
                     "hawkish", "dovish", "treasury yield"],
+    "earn_growth": ["record earnings", "earnings growth", "eps growth",
+                    "profit surge", "earnings beat", "record profit",
+                    "blowout quarter", "record quarter", "beat estimates",
+                    "exceeded expectations", "top-line beat"],
 }
 
 # ── Option 2: minimum keyword hits required before a catalyst tag fires ──
@@ -444,6 +449,7 @@ CATALYST_MIN_HITS = {
     "breakout":    1,   # technical terms are specific
     "geopolitical":2,   # "oil" or "china" alone is too broad
     "rate":        2,   # "fed" alone appears in too many general articles
+    "earn_growth": 1,   # "record earnings" is specific — 1 hit is sufficient
 }
 
 # ── Option 1: sector whitelist per catalyst ──────────────────────────────────
@@ -471,6 +477,7 @@ CATALYST_SECTOR_WHITELIST = {
                     "financial", "bank", "real estate", "reit", "utility",
                     "insurance", "mortgage", "savings", "trust",
                    ],
+    "earn_growth": None,   # universal — any company can post record earnings
 }
 
 # ----------------------------------------------------------------------------
@@ -913,6 +920,7 @@ def fetch_fuel(ticker: str) -> dict:
         "catalyst_score": 0.0,       # 0-100 composite catalyst sub-score
         "bimodal_event": False,      # binary event within ±3 days
         "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
+        "earnings_surprise": None,    # last quarter EPS beat vs estimates (%)
     }
     try:
         tk = yf.Ticker(ticker)
@@ -1033,6 +1041,20 @@ def fetch_fuel(ticker: str) -> dict:
             out["news_sentiment"] = sent
             out["latest_headline"] = latest
             # Tag any catalyst with at least 1 keyword hit
+            # ── Earnings growth fundamental check ─────────────────────────
+            # Fires when: last quarter beat estimates by 10%+ OR YoY EPS growth
+            # exceeds 25%. Adds 2 keyword hits so tag fires on fundamentals
+            # alone even without a matching news headline.
+            try:
+                _eg  = float(info.get("earningsGrowth") or 0.0)
+                _esp = float(info.get("earningsSurprise") or info.get("earningsSurprisePercent") or 0.0)
+                if abs(_esp) > 5: _esp = _esp / 100.0  # pct → fraction
+                if _esp >= 0.10 or _eg >= 0.25:
+                    cat_hits["earn_growth"] = cat_hits.get("earn_growth", 0) + 2
+                out["earnings_surprise"] = round(_esp * 100, 1) if _esp else None
+            except Exception:
+                pass
+
             # Apply Option 1 (sector whitelist) + Option 2 (min keyword hits)
             sector = out.get("sector", "")
             out["catalyst_tags"] = [
@@ -1091,6 +1113,8 @@ def fetch_fuel(ticker: str) -> dict:
             cat_sc += 5.0
         if "earnings" in tags and ed is None:
             cat_sc += 8.0       # earnings headlines without a clear date
+        if "earn_growth" in tags:
+            cat_sc += 20.0      # fundamental beat + news = strong momentum fuel
 
         # Days-to-cover bonus: >= 5 days = serious squeeze setup
         dtc = out["days_to_cover"]
@@ -1527,7 +1551,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.4"
+APP_VERSION = "v3.5"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -1826,6 +1850,7 @@ REFERENCE_KEY = [
         ("BIMODAL", "Binary event within 3 days (earnings, FDA, legal) = elevated volatility expected. Catalyst score multiplied 1.25x. Amber BIMODAL badge on card.", "1.25x multiplier"),
         ("DTC", "Days to Cover gauge: shares short / avg daily volume. Red = 10d+ extreme, amber = 7-10d high, yellow = 5-7d moderate. Links to Finviz.", "10d+ = extreme"),
         ("Filtered", "Catalysts detected but blocked by sector whitelist or keyword threshold appear struck-through in the Stock Analyzer, showing what was caught and why it was removed.", "transparency"),
+        ("EARN ↑", "Fires when last quarter beat analyst estimates by 10%+ OR YoY earnings growth exceeds 25%, confirmed by at least 1 news keyword. Universal — all sectors. Worth 20 pts in Fuel score. Links to Yahoo Finance financials.", "10% beat or 25% YoY growth"),
     ]),
     ("The scores", "#ffffff", [
         ("Score", "Overall grade 0-100: 60% Ignition + 40% Fuel. Displayed as the arc gauge sweep and center number on every card.", "arc gauge = score"),
@@ -1961,6 +1986,7 @@ CATALYST_TAG_META = {
     "breakout":     ("BREAKOUT",  "ct-breakout",     lambda t: f"https://finviz.com/quote.ashx?t={t}&ty=c&ta=1&p=d"),
     "geopolitical": ("GEO/MACRO", "ct-geopolitical", lambda t: f"https://www.google.com/search?q={t}+tariff+geopolitical+news&tbm=nws"),
     "rate":         ("FED/RATES", "ct-rate",         lambda t: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"),
+    "earn_growth":  ("EARN ↑",    "ct-earn-growth",  lambda t: f"https://finance.yahoo.com/quote/{t}/financials/"),
 }
 
 BIMODAL_TAG = ("BIMODAL", "ct-bimodal", lambda t: f"https://finance.yahoo.com/calendar/earnings?symbol={t}")
@@ -2657,6 +2683,10 @@ else:
             si_rows.append(mrow("Revenue Growth",  "YoY revenue growth. Double-digit = attractive to institutions.",      az_tag(rg * 100, 10, 3, "{:.1f}", "%")))
         if eg is not None:
             si_rows.append(mrow("Earnings Growth", "YoY EPS growth. Growing faster than revenue = margin expansion.",     az_tag(eg * 100, 10, 3, "{:.1f}", "%")))
+        _esp_pct = az_fuel.get("earnings_surprise")
+        if _esp_pct is not None:
+            _esp_col = "#4dd880" if _esp_pct >= 10 else ("#d0b040" if _esp_pct >= 0 else "#ff4444")
+            si_rows.append(mrow("Earnings Surprise", "Last quarter EPS vs analyst estimates. 10%+ beat = strong momentum fuel.", f"<span style='font-family:Space Mono,monospace;color:{_esp_col}'>{_esp_pct:+.1f}%</span> vs estimates"))
         if fuel_sc is not None:
             fc = "#4dd880" if fuel_sc >= 70 else ("#d0b040" if fuel_sc >= 50 else "#4a6a8a")
             si_rows.append(mrow("Fuel Score", "Primed-to-move score (0-100).", f"<span style='color:{fc};font-family:Space Mono,monospace;font-size:15px;font-weight:500'>{fuel_sc:.0f}</span>"))
