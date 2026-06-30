@@ -1849,6 +1849,83 @@ def render_eps_trend(eps_history):
     )
 
 
+def render_dividend_info(info):
+    """Render dividend details: payout per share, yield %, ex-date, pay date,
+    frequency, and payout ratio. info is the yfinance .info dict."""
+    rate     = info.get("dividendRate")              # annual $ per share
+    yield_   = info.get("dividendYield")             # decimal fraction
+    last_div = info.get("lastDividendValue")         # last single payment $
+    ex_date  = info.get("exDividendDate")            # unix ts or date
+    pay_date = info.get("lastDividendDate") or info.get("dividendDate")  # unix ts
+    payout   = info.get("payoutRatio")               # decimal fraction
+    freq_raw = info.get("dividendFrequency")         # rarely present
+
+    # No dividend at all
+    if not rate and not yield_ and not last_div:
+        st.caption("This stock does not currently pay a dividend.")
+        return
+
+    def _fmt_date(ts):
+        if ts is None:
+            return None
+        try:
+            if isinstance(ts, (int, float)):
+                return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%b %d, %Y")
+            d = pd.to_datetime(ts, errors="coerce")
+            return d.strftime("%b %d, %Y") if pd.notna(d) else None
+        except Exception:
+            return None
+
+    # Normalise yield — yfinance returns it as a fraction (0.035) OR percent (3.5)
+    yld_pct = None
+    if yield_ is not None:
+        yld_pct = yield_ * 100 if yield_ < 1 else yield_
+
+    # Infer frequency from annual rate / single payment
+    freq_label = "--"
+    per_payment = last_div
+    if freq_raw:
+        freq_label = str(freq_raw).title()
+    elif rate and last_div and last_div > 0:
+        ratio = round(rate / last_div)
+        freq_label = {1: "Annual", 2: "Semi-annual", 4: "Quarterly",
+                      12: "Monthly"}.get(ratio, f"{ratio}×/yr")
+
+    rows = []
+    if rate is not None:
+        rows.append(mrow("Annual Payout", "Total dollars paid per share per year.",
+                         f"<span style='font-family:Space Mono,monospace;color:#4dd880;font-weight:500'>${rate:.2f}</span>/share"))
+    if per_payment is not None:
+        rows.append(mrow("Per Payment", "Dollar amount of each individual dividend payment.",
+                         f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>${per_payment:.2f}</span>"))
+    if yld_pct is not None:
+        yc = "#4dd880" if yld_pct >= 4 else ("#d0b040" if yld_pct >= 2 else "#7a9ab8")
+        rows.append(mrow("Dividend Yield", "Annual payout as % of current price. 4%+ = high yield.",
+                         f"<span style='font-family:Space Mono,monospace;color:{yc};font-weight:500'>{yld_pct:.2f}%</span>"))
+    if freq_label != "--":
+        rows.append(mrow("Frequency", "How often the dividend is paid.",
+                         f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{freq_label}</span>"))
+    _ex = _fmt_date(ex_date)
+    if _ex:
+        rows.append(mrow("Ex-Dividend Date", "Buy BEFORE this date to receive the next dividend. Sell on/after and still get paid.",
+                         f"<span style='font-family:Space Mono,monospace;color:#f5a623'>{_ex}</span>"))
+    _pay = _fmt_date(pay_date)
+    if _pay:
+        rows.append(mrow("Last Pay Date", "When the most recent dividend was actually paid out.",
+                         f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{_pay}</span>"))
+    if payout is not None:
+        pr_pct = payout * 100 if payout < 1 else payout
+        pc = "#4dd880" if pr_pct < 60 else ("#d0b040" if pr_pct < 90 else "#ff4444")
+        rows.append(mrow("Payout Ratio", "% of earnings paid as dividends. Under 60% = sustainable. Over 90% = at risk.",
+                         f"<span style='font-family:Space Mono,monospace;color:{pc}'>{pr_pct:.1f}%</span>"))
+
+    if rows:
+        st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(rows)}</tbody></table>",
+                    unsafe_allow_html=True)
+    else:
+        st.caption("Dividend data unavailable for this ticker.")
+
+
 @st.cache_data(ttl=900, show_spinner="Loading analysis…")
 def fetch_analyzer(ticker):
     """Fetch full analyst data for the Stock Analyzer section.
@@ -2892,6 +2969,9 @@ else:
         az_section("Earnings Breakdown (EPS Trend)")
         render_eps_trend(eps_history)
 
+        az_section("Dividend")
+        render_dividend_info(info)
+
     # ── COLUMN C: Valuation + Financial Health + Analyst ────────────
     with colC:
         az_section("Valuation")
@@ -3349,6 +3429,9 @@ with tab_lookup:
 
             az_section("Earnings Breakdown (EPS Trend)")
             render_eps_trend(lk_eps_history)
+
+            az_section("Dividend")
+            render_dividend_info(lk_info)
 
         with lk_colC:
             az_section("Valuation")
