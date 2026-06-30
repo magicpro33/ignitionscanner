@@ -1732,6 +1732,123 @@ def pct_color(v):
     return f"<span style='font-family:Space Mono,monospace;color:{col}'>{'+' if v >= 0 else ''}{v:.2f}%</span>"
 
 
+def render_eps_trend(eps_history):
+    """Render an SVG bar chart of quarterly EPS (actual vs estimate) with a
+    beat/miss surprise row. eps_history is oldest→newest list of dicts."""
+    if not eps_history:
+        st.caption("Quarterly EPS history unavailable for this ticker.")
+        return
+
+    n = len(eps_history)
+    # Chart geometry
+    W, H = 300, 110
+    pad_l, pad_r, pad_t, pad_b = 8, 8, 10, 22
+    plot_w = W - pad_l - pad_r
+    plot_h = H - pad_t - pad_b
+    slot   = plot_w / n
+    bar_w  = min(slot * 0.55, 26)
+
+    # Value range across actual + estimate
+    vals = []
+    for q in eps_history:
+        if q["actual"]   is not None: vals.append(q["actual"])
+        if q["estimate"] is not None: vals.append(q["estimate"])
+    if not vals:
+        st.caption("Quarterly EPS history unavailable for this ticker.")
+        return
+    vmax = max(vals); vmin = min(vals)
+    # Always include zero baseline
+    vmax = max(vmax, 0.0); vmin = min(vmin, 0.0)
+    vrange = (vmax - vmin) or 1.0
+
+    def y_of(v):
+        return pad_t + plot_h * (1 - (v - vmin) / vrange)
+
+    zero_y = y_of(0.0)
+    bars_svg = []
+    labels_svg = []
+    for i, q in enumerate(eps_history):
+        cx = pad_l + slot * i + slot / 2
+        # Estimate marker (hollow tick)
+        if q["estimate"] is not None:
+            ey = y_of(q["estimate"])
+            bars_svg.append(
+                f"<line x1='{cx-bar_w/2-2:.1f}' y1='{ey:.1f}' x2='{cx+bar_w/2+2:.1f}' "
+                f"y2='{ey:.1f}' stroke='#7a9ab8' stroke-width='1.5' stroke-dasharray='2,2'/>"
+            )
+        # Actual bar
+        if q["actual"] is not None:
+            ay = y_of(q["actual"])
+            beat = q["surprise"]
+            if beat is not None:
+                col = "#4dd880" if beat >= 0 else "#ff4444"
+            else:
+                col = "#4dd880" if q["actual"] >= 0 else "#ff4444"
+            top    = min(ay, zero_y)
+            height = abs(ay - zero_y)
+            bars_svg.append(
+                f"<rect x='{cx-bar_w/2:.1f}' y='{top:.1f}' width='{bar_w:.1f}' "
+                f"height='{max(height,1):.1f}' rx='2' fill='{col}'/>"
+            )
+        # Quarter label (abbreviated)
+        ql = q["quarter"].split()[0] if q["quarter"] else ""
+        labels_svg.append(
+            f"<text x='{cx:.1f}' y='{H-6}' text-anchor='middle' "
+            f"font-family='Space Mono,monospace' font-size='7' fill='#7a9ab8'>{ql}</text>"
+        )
+
+    zero_line = (
+        f"<line x1='{pad_l}' y1='{zero_y:.1f}' x2='{W-pad_r}' y2='{zero_y:.1f}' "
+        f"stroke='#1e3a5f' stroke-width='1'/>"
+    )
+
+    svg = (
+        f"<svg width='100%' height='{H}' viewBox='0 0 {W} {H}' "
+        f"preserveAspectRatio='xMidYMid meet' style='max-width:340px'>"
+        f"{zero_line}{''.join(bars_svg)}{''.join(labels_svg)}</svg>"
+    )
+
+    # Legend
+    legend = (
+        "<div style='display:flex;gap:14px;font-family:Space Mono,monospace;"
+        "font-size:10px;color:#7a9ab8;margin:2px 0 6px'>"
+        "<span><span style='color:#4dd880'>█</span> beat</span>"
+        "<span><span style='color:#ff4444'>█</span> miss</span>"
+        "<span><span style='color:#7a9ab8'>╌</span> estimate</span>"
+        "</div>"
+    )
+    st.markdown(legend + svg, unsafe_allow_html=True)
+
+    # Per-quarter table — actual / estimate / surprise
+    rows = []
+    for q in reversed(eps_history):  # newest first
+        a   = f"${q['actual']:.2f}"   if q["actual"]   is not None else "--"
+        e   = f"${q['estimate']:.2f}" if q["estimate"] is not None else "--"
+        if q["surprise"] is not None:
+            sc  = "#4dd880" if q["surprise"] >= 0 else "#ff4444"
+            s   = f"<span style='color:{sc}'>{q['surprise']:+.1f}%</span>"
+        else:
+            s = "--"
+        rows.append(
+            f"<tr>"
+            f"<td style='padding:3px 8px;font-family:Space Mono,monospace;font-size:11px;color:#b0c8e8'>{q['quarter']}</td>"
+            f"<td style='padding:3px 8px;font-family:Space Mono,monospace;font-size:11px;color:#ffffff;text-align:right'>{a}</td>"
+            f"<td style='padding:3px 8px;font-family:Space Mono,monospace;font-size:11px;color:#7a9ab8;text-align:right'>{e}</td>"
+            f"<td style='padding:3px 8px;font-family:Space Mono,monospace;font-size:11px;text-align:right'>{s}</td>"
+            f"</tr>"
+        )
+    st.markdown(
+        "<table style='width:100%;border-collapse:collapse'>"
+        "<thead><tr>"
+        "<th style='padding:3px 8px;font-family:Space Mono,monospace;font-size:9px;color:#4a6a8a;text-align:left;text-transform:uppercase'>Quarter</th>"
+        "<th style='padding:3px 8px;font-family:Space Mono,monospace;font-size:9px;color:#4a6a8a;text-align:right;text-transform:uppercase'>Actual</th>"
+        "<th style='padding:3px 8px;font-family:Space Mono,monospace;font-size:9px;color:#4a6a8a;text-align:right;text-transform:uppercase'>Est</th>"
+        "<th style='padding:3px 8px;font-family:Space Mono,monospace;font-size:9px;color:#4a6a8a;text-align:right;text-transform:uppercase'>Surprise</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>",
+        unsafe_allow_html=True,
+    )
+
+
 @st.cache_data(ttl=900, show_spinner="Loading analysis…")
 def fetch_analyzer(ticker):
     """Fetch full analyst data for the Stock Analyzer section.
@@ -1822,7 +1939,72 @@ def fetch_analyzer(ticker):
         except Exception:
             pass
 
-    return info, hist
+    # ── Step 4: Quarterly EPS history (actual vs estimate) ───────────
+    # Returns a list of dicts: [{quarter, actual, estimate, surprise_pct}, ...]
+    # ordered oldest → newest. Empty list if unavailable.
+    eps_history = []
+    try:
+        # yfinance >= 0.2 exposes earnings_history (actual vs estimate per quarter)
+        eh = getattr(tk, "earnings_history", None)
+        if eh is not None and hasattr(eh, "empty") and not eh.empty:
+            eh = eh.copy()
+            # Columns vary by version: epsActual/epsEstimate or epsactual/epsestimate
+            cols = {c.lower(): c for c in eh.columns}
+            act_col = cols.get("epsactual") or cols.get("eps_actual")
+            est_col = cols.get("epsestimate") or cols.get("eps_estimate")
+            sur_col = cols.get("surprisepercent") or cols.get("surprise_percent")
+            # Index is usually the quarter date
+            for idx, row in eh.iterrows():
+                actual   = row.get(act_col) if act_col else None
+                estimate = row.get(est_col) if est_col else None
+                surprise = row.get(sur_col) if sur_col else None
+                if actual is None and estimate is None:
+                    continue
+                # Surprise % — compute if not provided
+                if surprise is None and actual is not None and estimate not in (None, 0):
+                    try:
+                        surprise = (float(actual) - float(estimate)) / abs(float(estimate)) * 100
+                    except Exception:
+                        surprise = None
+                # Quarter label
+                q_label = str(idx)
+                try:
+                    q_dt = pd.to_datetime(idx, errors="coerce")
+                    if pd.notna(q_dt):
+                        q_label = q_dt.strftime("%b %Y")
+                except Exception:
+                    pass
+                eps_history.append({
+                    "quarter":  q_label,
+                    "actual":   float(actual) if actual is not None else None,
+                    "estimate": float(estimate) if estimate is not None else None,
+                    "surprise": float(surprise) if surprise is not None else None,
+                })
+            # Keep most recent 8 quarters, oldest → newest
+            eps_history = eps_history[-8:]
+    except Exception:
+        eps_history = []
+
+    # Fallback: quarterly EPS from income statement if earnings_history empty
+    if not eps_history:
+        try:
+            qe = getattr(tk, "quarterly_earnings", None)
+            if qe is not None and hasattr(qe, "empty") and not qe.empty:
+                qe = qe.copy()
+                for idx, row in qe.iterrows():
+                    eps_val = row.get("Earnings") if hasattr(row, "get") else None
+                    q_label = str(idx)
+                    eps_history.append({
+                        "quarter":  q_label,
+                        "actual":   float(eps_val) if eps_val is not None else None,
+                        "estimate": None,
+                        "surprise": None,
+                    })
+                eps_history = eps_history[-8:]
+        except Exception:
+            pass
+
+    return info, hist, eps_history
 
 # ----------------------------------------------------------------------------
 # Reference key (rendered in its own tab)
@@ -2400,7 +2582,7 @@ else:
     # ── helper renderers ────────────────────────────────────────────
     # helpers and fetch_analyzer defined at module level
 
-    info, hist = fetch_analyzer(az_ticker)
+    info, hist, eps_history = fetch_analyzer(az_ticker)
 
     # ── Resolve scan result first — needed for fuel merge and px fallback ───
     scan_r  = next((r for r in ok if r["ticker"] == az_ticker), None)
@@ -2707,6 +2889,9 @@ else:
         else:
             st.caption("No active signals this scan.")
 
+        az_section("Earnings Breakdown (EPS Trend)")
+        render_eps_trend(eps_history)
+
     # ── COLUMN C: Valuation + Financial Health + Analyst ────────────
     with colC:
         az_section("Valuation")
@@ -2851,7 +3036,7 @@ with tab_lookup:
 
         # ── Step 2: Deep fundamentals (Alpaca history + Yahoo + dump) ─
         with st.spinner("Loading fundamentals…"):
-            lk_info, lk_hist = fetch_analyzer(lk_ticker)
+            lk_info, lk_hist, lk_eps_history = fetch_analyzer(lk_ticker)
 
         # ── Merge fuel dict into info to fill gaps ───────────────────────
         # fetch_fuel and fetch_analyzer both hit yfinance but cache independently.
@@ -3161,6 +3346,9 @@ with tab_lookup:
                 ), unsafe_allow_html=True)
             else:
                 st.caption("No active live signals.")
+
+            az_section("Earnings Breakdown (EPS Trend)")
+            render_eps_trend(lk_eps_history)
 
         with lk_colC:
             az_section("Valuation")
