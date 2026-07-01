@@ -1937,12 +1937,14 @@ def render_eps_trend(eps_history, eps_forward=None):
 
 def render_dividend_info(info):
     """Render dividend details: payout per share, yield %, ex-date, pay date,
-    frequency, and payout ratio. info is the yfinance .info dict."""
+    future payout date, frequency, and payout ratio. info is yfinance .info."""
     rate     = info.get("dividendRate")              # annual $ per share
     yield_   = info.get("dividendYield")             # decimal fraction
     last_div = info.get("lastDividendValue")         # last single payment $
-    ex_date  = info.get("exDividendDate")            # unix ts or date
-    pay_date = info.get("lastDividendDate") or info.get("dividendDate")  # unix ts
+    ex_date  = info.get("exDividendDate")            # unix ts — next ex-date
+    # yfinance dividendDate is the UPCOMING pay date; lastDividendDate is historical
+    next_pay = info.get("dividendDate")
+    last_pay = info.get("lastDividendDate")
     payout   = info.get("payoutRatio")               # decimal fraction
     freq_raw = info.get("dividendFrequency")         # rarely present
 
@@ -1962,6 +1964,17 @@ def render_dividend_info(info):
         except Exception:
             return None
 
+    def _to_dt(ts):
+        if ts is None:
+            return None
+        try:
+            if isinstance(ts, (int, float)):
+                return datetime.fromtimestamp(ts, tz=timezone.utc)
+            d = pd.to_datetime(ts, errors="coerce")
+            return d.to_pydatetime() if pd.notna(d) else None
+        except Exception:
+            return None
+
     # Normalise yield — yfinance returns it as a fraction (0.035) OR percent (3.5)
     yld_pct = None
     if yield_ is not None:
@@ -1970,12 +1983,47 @@ def render_dividend_info(info):
     # Infer frequency from annual rate / single payment
     freq_label = "--"
     per_payment = last_div
+    freq_months = None   # months between payments, for projecting the next date
     if freq_raw:
         freq_label = str(freq_raw).title()
     elif rate and last_div and last_div > 0:
         ratio = round(rate / last_div)
         freq_label = {1: "Annual", 2: "Semi-annual", 4: "Quarterly",
                       12: "Monthly"}.get(ratio, f"{ratio}×/yr")
+        freq_months = {1: 12, 2: 6, 4: 3, 12: 1}.get(ratio)
+
+    # ── Determine the next (future) payout date ──────────────────────
+    # Priority: 1) yfinance dividendDate if it's in the future,
+    #           2) project from ex-date + frequency,
+    #           3) project from last pay date + frequency
+    now = datetime.now(timezone.utc)
+    next_pay_dt   = _to_dt(next_pay)
+    next_pay_est  = False
+    if next_pay_dt is None or next_pay_dt < now:
+        # Project forward from the ex-dividend date (pay usually ~2-4 wks after)
+        ex_dt = _to_dt(ex_date)
+        if ex_dt is not None and freq_months:
+            projected = ex_dt
+            # Roll forward until it's in the future
+            while projected < now:
+                m = projected.month - 1 + freq_months
+                projected = projected.replace(
+                    year=projected.year + m // 12, month=m % 12 + 1
+                )
+            # Pay date typically lands ~3 weeks after ex-date
+            next_pay_dt  = projected + timedelta(days=21)
+            next_pay_est = True
+        elif last_pay is not None and freq_months:
+            lp = _to_dt(last_pay)
+            if lp is not None:
+                projected = lp
+                while projected < now:
+                    m = projected.month - 1 + freq_months
+                    projected = projected.replace(
+                        year=projected.year + m // 12, month=m % 12 + 1
+                    )
+                next_pay_dt  = projected
+                next_pay_est = True
 
     rows = []
     if rate is not None:
@@ -1995,10 +2043,19 @@ def render_dividend_info(info):
     if _ex:
         rows.append(mrow("Ex-Dividend Date", "Buy BEFORE this date to receive the next dividend. Sell on/after and still get paid.",
                          f"<span style='font-family:Space Mono,monospace;color:#f5a623'>{_ex}</span>"))
-    _pay = _fmt_date(pay_date)
-    if _pay:
+    # ── Future payout date ───────────────────────────────────────────
+    if next_pay_dt is not None:
+        _np = next_pay_dt.strftime("%b %d, %Y")
+        est_tag = " <span style='font-size:9px;color:#7a9ab8'>(est.)</span>" if next_pay_est else ""
+        tip = ("Projected next payment date based on ex-dividend date and payment frequency."
+               if next_pay_est else
+               "Next scheduled dividend payment date from the company.")
+        rows.append(mrow("Next Payout Date", tip,
+                         f"<span style='font-family:Space Mono,monospace;color:#4dd880;font-weight:500'>{_np}</span>{est_tag}"))
+    _lp = _fmt_date(last_pay)
+    if _lp:
         rows.append(mrow("Last Pay Date", "When the most recent dividend was actually paid out.",
-                         f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{_pay}</span>"))
+                         f"<span style='font-family:Space Mono,monospace;color:#b0c8e8'>{_lp}</span>"))
     if payout is not None:
         pr_pct = payout * 100 if payout < 1 else payout
         pc = "#4dd880" if pr_pct < 60 else ("#d0b040" if pr_pct < 90 else "#ff4444")
