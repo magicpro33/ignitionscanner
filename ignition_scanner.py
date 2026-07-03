@@ -922,14 +922,27 @@ def fetch_fuel(ticker: str) -> dict:
         "bimodal_event": False,      # binary event within ±3 days
         "catalyst_suppressed": [],   # tags detected but filtered out (sector/threshold)
         "earnings_surprise": None,    # last quarter EPS beat vs estimates (%)
+        "data_issues": [],            # reasons any data could not be fetched
     }
     try:
         tk = yf.Ticker(ticker)
         info = {}
         try:
             info = tk.info or {}
-        except Exception:
+            if not info or len(info) < 3:
+                out["data_issues"].append(
+                    "fundamentals: yfinance returned empty (rate-limited or unknown symbol)")
+        except Exception as _ie:
             info = {}
+            _msg = str(_ie)[:80]
+            if "404" in _msg or "Not Found" in _msg:
+                out["data_issues"].append(
+                    "fundamentals: not available (ETF/fund or delisted symbol)")
+            elif "429" in _msg or "rate" in _msg.lower():
+                out["data_issues"].append(
+                    "fundamentals: yfinance rate limit hit — retry in a few seconds")
+            else:
+                out["data_issues"].append(f"fundamentals: {_msg}")
 
         out["short_pct_float"] = info.get("shortPercentOfFloat")
         out["float_shares"] = info.get("floatShares")
@@ -1161,15 +1174,36 @@ def compute_signals(ticker: str) -> dict:
 
     close = m1["Close"]
     s["price"] = float(close.iloc[-1])
-    prev_close = float(daily["Close"].iloc[-2]) if len(daily) >= 2 else float(daily["Close"].iloc[-1])
+
+    # --- Date-aware previous close ------------------------------------
+    # Alpaca and Yahoo differ on whether the last daily bar is today's
+    # partial bar. Select the last bar strictly BEFORE the intraday
+    # session date instead of blindly using iloc[-2].
+    session_date = m1.index[-1].date()
+    try:
+        prior = daily[daily.index.date < session_date]
+    except Exception:
+        prior = daily.iloc[:-1] if len(daily) >= 2 else daily
+    if len(prior) >= 1:
+        prev_close = float(prior["Close"].iloc[-1])
+    else:
+        prev_close = float(daily["Close"].iloc[-1])
     s["chg_pct"] = (s["price"] / prev_close - 1.0) * 100.0 if prev_close else None
 
     # --- RVOL: cumulative volume today vs trailing average, curve-adjusted ---
-    # Adaptive window: up to 20 days, fewer if history is short (new listings)
-    win = min(20, len(daily) - 1)
-    avg_daily_vol = float(daily["Volume"].iloc[-(win + 1):-1].mean())
+    # Baseline uses only completed prior days (date-aware, never today's
+    # partial bar). Adaptive window: up to 20 days, fewer for new listings.
+    base = prior if len(prior) >= 5 else daily.iloc[:-1]
+    win = min(20, len(base))
+    avg_daily_vol = float(base["Volume"].iloc[-win:].mean()) if win > 0 else 0.0
     cum_vol = float(m1["Volume"].sum())
-    elapsed = max(len(m1), 1)  # minutes elapsed in session
+    # True elapsed minutes from bar timestamps — illiquid tickers have gaps
+    # in their 1m bars, so len(m1) undercounts and would inflate RVOL.
+    try:
+        elapsed = int((m1.index[-1] - m1.index[0]).total_seconds() // 60) + 1
+        elapsed = max(elapsed, len(m1), 1)
+    except Exception:
+        elapsed = max(len(m1), 1)
     expected = avg_daily_vol * expected_vol_fraction(elapsed)
     s["rvol"] = cum_vol / expected if expected > 0 else 0.0
 
@@ -1587,7 +1621,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.5"
+APP_VERSION = "v3.6"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -1773,13 +1807,13 @@ def pct_color(v):
     return f"<span style='font-family:Space Mono,monospace;color:{col}'>{'+' if v >= 0 else ''}{v:.2f}%</span>"
 
 
-def render_eps_trend(eps_history, eps_forward=None):
+def render_eps_trend(eps_history, eps_forward=None, why=""):
     """SVG bar chart of quarterly EPS (actual vs estimate) plus forward
     analyst projections. eps_history = oldest→newest historicals; eps_forward
     = forward consensus estimates (next qtr, qtr after, this yr, next yr)."""
     eps_forward = eps_forward or []
     if not eps_history and not eps_forward:
-        st.caption("Quarterly EPS history unavailable for this ticker.")
+        st.caption(f"Quarterly EPS history unavailable — {why or 'no earnings records returned (thin coverage, ETF, or rate limit)'}")
         return
 
     # Build a combined timeline: historicals (bars) then forward (projected bars)
@@ -1799,7 +1833,7 @@ def render_eps_trend(eps_history, eps_forward=None):
                          "kind": "projected", "est": None})
 
     if not timeline:
-        st.caption("Quarterly EPS history unavailable for this ticker.")
+        st.caption(f"Quarterly EPS history unavailable — {why or 'no earnings records returned (thin coverage, ETF, or rate limit)'}")
         return
 
     n = len(timeline)
@@ -1813,7 +1847,7 @@ def render_eps_trend(eps_history, eps_forward=None):
     vals = [t["value"] for t in timeline if t["value"] is not None]
     vals += [t["est"] for t in timeline if t.get("est") is not None]
     if not vals:
-        st.caption("Quarterly EPS history unavailable for this ticker.")
+        st.caption(f"Quarterly EPS history unavailable — {why or 'no earnings records returned (thin coverage, ETF, or rate limit)'}")
         return
     vmax = max(max(vals), 0.0)
     vmin = min(min(vals), 0.0)
@@ -1950,7 +1984,10 @@ def render_dividend_info(info):
 
     # No dividend at all
     if not rate and not yield_ and not last_div:
-        st.caption("This stock does not currently pay a dividend.")
+        if info.get("_data_issues"):
+            st.caption(f"Dividend data unavailable — {'; '.join(info['_data_issues'])}")
+        else:
+            st.caption("This stock does not currently pay a dividend.")
         return
 
     def _fmt_date(ts):
@@ -2105,10 +2142,21 @@ def fetch_analyzer(ticker):
 
     # ── Step 2: Fundamentals from yfinance ───────────────────────────
     info = {}
+    _issues = []
+    if hist.empty:
+        _issues.append("price history: no bars from Alpaca or Yahoo (new listing, delisted, or feed outage)")
     try:
         info = tk.info or {}
-    except Exception:
-        pass
+        if not info or len(info) < 3:
+            _issues.append("fundamentals: yfinance returned empty (rate-limited or symbol has no profile)")
+    except Exception as _ie:
+        _msg = str(_ie)[:80]
+        if "404" in _msg or "Not Found" in _msg:
+            _issues.append("fundamentals: not published for this symbol (ETFs/funds have no fundamentals)")
+        elif "429" in _msg or "rate" in _msg.lower():
+            _issues.append("fundamentals: yfinance rate limit — wait a few seconds and press Refresh")
+        else:
+            _issues.append(f"fundamentals: {_msg}")
 
     # ── Step 3: Nightly scan dump fallback for missing fields ────────
     # Fields we want that yfinance often omits for smaller/thinner tickers
@@ -2204,6 +2252,7 @@ def fetch_analyzer(ticker):
             eps_history = eps_history[-8:]
     except Exception:
         eps_history = []
+        _issues.append("EPS history: earnings data not returned (thin analyst coverage or rate limit)")
 
     # Fallback: quarterly EPS from income statement if earnings_history empty
     if not eps_history:
@@ -2278,6 +2327,8 @@ def fetch_analyzer(ticker):
         except Exception:
             pass
 
+    if _issues:
+        info["_data_issues"] = _issues
     return info, hist, eps_history, eps_forward
 
 
@@ -3150,7 +3201,8 @@ else:
         if si_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(si_rows)}</tbody></table>", unsafe_allow_html=True)
         else:
-            st.caption("Short interest data unavailable for this ticker.")
+            _why = "; ".join(info.get("_data_issues", [])) or "short interest not published for this symbol (common for ETFs and foreign listings)"
+            st.caption(f"Short interest unavailable — {_why}")
 
         az_section("Live Signals")
         if reasons:
@@ -3165,7 +3217,7 @@ else:
             st.caption("No active signals this scan.")
 
         az_section("Earnings Breakdown (EPS Trend)")
-        render_eps_trend(eps_history, eps_forward)
+        render_eps_trend(eps_history, eps_forward, why='; '.join(info.get('_data_issues', [])))
 
         az_section("Dividend")
         render_dividend_info(info)
@@ -3195,7 +3247,8 @@ else:
         if val_rows:
             st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
         else:
-            st.caption("Valuation data unavailable — yfinance may be rate-limited. Try again shortly.")
+            _why = "; ".join(info.get("_data_issues", [])) or "yfinance returned no valuation fields — likely rate-limited; press Refresh"
+            st.caption(f"Valuation unavailable — {_why}")
 
         az_section("Financial Health")
         hlth_rows = []
@@ -3626,7 +3679,7 @@ with tab_lookup:
                 st.caption("No active live signals.")
 
             az_section("Earnings Breakdown (EPS Trend)")
-            render_eps_trend(lk_eps_history, lk_eps_forward)
+            render_eps_trend(lk_eps_history, lk_eps_forward, why='; '.join(lk_info.get('_data_issues', [])))
 
             az_section("Dividend")
             render_dividend_info(lk_info)
@@ -3652,7 +3705,8 @@ with tab_lookup:
             if val_rows:
                 st.markdown(f"<table style='width:100%;border-collapse:collapse'><tbody>{''.join(val_rows)}</tbody></table>", unsafe_allow_html=True)
             else:
-                st.caption("Valuation data unavailable — market may be closed or ticker thin. Try again in a few seconds.")
+                _why = "; ".join(lk_info.get("_data_issues", [])) or "yfinance returned no valuation fields — likely rate-limited; retry"
+                st.caption(f"Valuation unavailable — {_why}")
 
             az_section("Financial Health")
             hlth_rows = []
