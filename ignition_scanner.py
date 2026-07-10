@@ -1638,7 +1638,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.7"
+APP_VERSION = "v3.8"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -2275,25 +2275,44 @@ def fetch_analyzer(ticker):
         eps_history = []
         _issues.append("EPS history: earnings data not returned (thin analyst coverage or rate limit)")
 
-    # Fallback: quarterly EPS from income statement if earnings_history empty
+    # Fallback: derive quarterly EPS from the income statement if
+    # earnings_history was empty. We deliberately do NOT use
+    # tk.quarterly_earnings / tk.earnings here — yfinance has deprecated
+    # that property (it warns "not available via API, look for Net Income
+    # in Ticker.income_stmt") and the underlying scraper it falls back to
+    # is unmaintained and has caused interpreter-level crashes in this
+    # environment. income_stmt is the modern, supported replacement.
     if not eps_history:
         try:
             with _YF_LOCK:
-                qe = getattr(tk, "quarterly_earnings", None)
-            if qe is not None and hasattr(qe, "empty") and not qe.empty:
-                qe = qe.copy()
-                for idx, row in qe.iterrows():
-                    eps_val = row.get("Earnings") if hasattr(row, "get") else None
-                    q_label = str(idx)
-                    eps_history.append({
-                        "quarter":  q_label,
-                        "actual":   float(eps_val) if eps_val is not None else None,
-                        "estimate": None,
-                        "surprise": None,
-                    })
-                eps_history = eps_history[-8:]
+                qis = getattr(tk, "quarterly_income_stmt", None)
+            if qis is not None and hasattr(qis, "empty") and not qis.empty:
+                # Rows are line items (e.g. "Net Income", "Diluted EPS"),
+                # columns are quarter-end dates, newest first.
+                row_idx = {str(i).strip().lower(): i for i in qis.index}
+                eps_row = row_idx.get("diluted eps") or row_idx.get("basic eps")
+                if eps_row is not None:
+                    for col in qis.columns:
+                        val = qis.loc[eps_row, col]
+                        if pd.isna(val):
+                            continue
+                        try:
+                            q_dt = pd.to_datetime(col, errors="coerce")
+                            q_label = q_dt.strftime("%b %Y") if pd.notna(q_dt) else str(col)
+                        except Exception:
+                            q_label = str(col)
+                        eps_history.append({
+                            "quarter":  q_label,
+                            "actual":   float(val),
+                            "estimate": None,
+                            "surprise": None,
+                        })
+                    # Statement columns are newest→oldest; reverse to oldest→newest
+                    eps_history = list(reversed(eps_history))[-8:]
         except Exception:
             pass
+        if not eps_history:
+            _issues.append("EPS history: income statement EPS line item not available for this symbol")
 
     # ── Forward EPS estimates (analyst consensus, as far out as available) ─
     # Sources, in priority order:
