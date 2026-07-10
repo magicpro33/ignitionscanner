@@ -34,8 +34,18 @@ import re
 import gzip
 import json
 import decimal
+import threading
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# yfinance's HTTP layer (curl_cffi) is not thread-safe and segfaults the
+# interpreter when hit from multiple threads simultaneously — the crash
+# does not raise a Python exception, so it cannot be try/excepted. All
+# yfinance calls (yf.Ticker, yf.Search) must be serialized through this
+# lock even though the surrounding scan is parallelized across threads.
+# Alpaca calls use plain `requests` (thread-safe) and are NOT gated by
+# this lock, so most of the parallel-scan speedup is preserved.
+_YF_LOCK = threading.Lock()
 
 import numpy as np
 import pandas as pd
@@ -662,9 +672,10 @@ def fetch_intraday(ticker: str):
 
     m1_y = m5_y = None
     try:
-        tk = yf.Ticker(ticker)
-        m1_y = flatten_cols(tk.history(period="1d", interval="1m", prepost=False))
-        m5_y = flatten_cols(tk.history(period="5d", interval="5m", prepost=False))
+        with _YF_LOCK:
+            tk = yf.Ticker(ticker)
+            m1_y = flatten_cols(tk.history(period="1d", interval="1m", prepost=False))
+            m5_y = flatten_cols(tk.history(period="5d", interval="5m", prepost=False))
     except Exception:
         m1_y = m5_y = None
     if _bars_ok(m1_y, 6):
@@ -694,7 +705,8 @@ def fetch_daily(ticker: str):
         return d_a
     d_y = None
     try:
-        d_y = flatten_cols(yf.Ticker(ticker).history(period="3mo", interval="1d"))
+        with _YF_LOCK:
+            d_y = flatten_cols(yf.Ticker(ticker).history(period="3mo", interval="1d"))
     except Exception:
         d_y = None
     if _bars_ok(d_y, 21):
@@ -925,10 +937,12 @@ def fetch_fuel(ticker: str) -> dict:
         "data_issues": [],            # reasons any data could not be fetched
     }
     try:
-        tk = yf.Ticker(ticker)
+        with _YF_LOCK:
+            tk = yf.Ticker(ticker)
         info = {}
         try:
-            info = tk.info or {}
+            with _YF_LOCK:
+                info = tk.info or {}
             if not info or len(info) < 3:
                 out["data_issues"].append(
                     "fundamentals: yfinance returned empty (rate-limited or unknown symbol)")
@@ -964,7 +978,8 @@ def fetch_fuel(ticker: str) -> dict:
 
         # Next earnings date
         try:
-            cal = tk.calendar
+            with _YF_LOCK:
+                cal = tk.calendar
             if isinstance(cal, dict):
                 ed = cal.get("Earnings Date") or cal.get("earningsDate")
                 if ed is not None:
@@ -986,7 +1001,8 @@ def fetch_fuel(ticker: str) -> dict:
 
         # Insider transactions (last ~90 days)
         try:
-            ins = tk.insider_transactions
+            with _YF_LOCK:
+                ins = tk.insider_transactions
             if ins is not None and len(ins) > 0:
                 ins = ins.copy()
                 date_col = None
@@ -1021,7 +1037,8 @@ def fetch_fuel(ticker: str) -> dict:
 
         # News flow + catalyst detection
         try:
-            news = tk.news or []
+            with _YF_LOCK:
+                news = tk.news or []
             now = datetime.now(timezone.utc)
             sent = 0
             count = 0
@@ -1621,7 +1638,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.6"
+APP_VERSION = "v3.7"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
@@ -2129,10 +2146,12 @@ def fetch_analyzer(ticker):
             pass
 
     # Yahoo fallback for history
-    tk = yf.Ticker(ticker)
+    with _YF_LOCK:
+        tk = yf.Ticker(ticker)
     if hist.empty:
         try:
-            h = tk.history(period="1y", interval="1d")
+            with _YF_LOCK:
+                h = tk.history(period="1y", interval="1d")
             if h is not None and not h.empty:
                 if isinstance(h.columns, pd.MultiIndex):
                     h.columns = h.columns.get_level_values(0)
@@ -2146,7 +2165,8 @@ def fetch_analyzer(ticker):
     if hist.empty:
         _issues.append("price history: no bars from Alpaca or Yahoo (new listing, delisted, or feed outage)")
     try:
-        info = tk.info or {}
+        with _YF_LOCK:
+            info = tk.info or {}
         if not info or len(info) < 3:
             _issues.append("fundamentals: yfinance returned empty (rate-limited or symbol has no profile)")
     except Exception as _ie:
@@ -2213,7 +2233,8 @@ def fetch_analyzer(ticker):
     eps_history = []
     try:
         # yfinance >= 0.2 exposes earnings_history (actual vs estimate per quarter)
-        eh = getattr(tk, "earnings_history", None)
+        with _YF_LOCK:
+            eh = getattr(tk, "earnings_history", None)
         if eh is not None and hasattr(eh, "empty") and not eh.empty:
             eh = eh.copy()
             # Columns vary by version: epsActual/epsEstimate or epsactual/epsestimate
@@ -2257,7 +2278,8 @@ def fetch_analyzer(ticker):
     # Fallback: quarterly EPS from income statement if earnings_history empty
     if not eps_history:
         try:
-            qe = getattr(tk, "quarterly_earnings", None)
+            with _YF_LOCK:
+                qe = getattr(tk, "quarterly_earnings", None)
             if qe is not None and hasattr(qe, "empty") and not qe.empty:
                 qe = qe.copy()
                 for idx, row in qe.iterrows():
@@ -2281,7 +2303,8 @@ def fetch_analyzer(ticker):
     # Returns oldest→newest list: [{period, estimate, n_analysts, is_forward}]
     eps_forward = []
     try:
-        ee = getattr(tk, "earnings_estimate", None)
+        with _YF_LOCK:
+            ee = getattr(tk, "earnings_estimate", None)
         if ee is not None and hasattr(ee, "empty") and not ee.empty:
             # Rows indexed by period: '0q','+1q','0y','+1y' (current/next qtr/yr)
             period_labels = {
@@ -3330,14 +3353,16 @@ with tab_lookup:
         q = query.strip().upper()
         if _re.fullmatch(r"[A-Z]{1,5}([.\-][A-Z]{1,2})?", q):
             try:
-                info = yf.Ticker(q).info or {}
+                with _YF_LOCK:
+                    info = yf.Ticker(q).info or {}
                 name = info.get("shortName") or info.get("longName") or q
                 if info.get("regularMarketPrice") or info.get("currentPrice") or info.get("previousClose"):
                     return q, name
             except Exception:
                 pass
         try:
-            results = yf.Search(query.strip(), max_results=5).quotes
+            with _YF_LOCK:
+                results = yf.Search(query.strip(), max_results=5).quotes
             if results:
                 best = results[0]
                 return best.get("symbol", q), best.get("shortname") or best.get("longname") or q
