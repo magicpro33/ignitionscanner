@@ -1,5 +1,15 @@
+# IGNITION scanner — dependencies
+#
+# NOTE: curl_cffi (yfinance's default HTTP backend) is disabled at
+# runtime via YF_DISABLE_CURL_CFFI=1, set at the top of
+# ignition_scanner.py BEFORE yfinance is imported. curl_cffi 0.15.0
+# has segfault-class bugs (memory corruption in Curl.reset(), upstream
+# issue #677) that repeatedly crashed the interpreter in production
+# with no traceback. With the env var set, yfinance uses its officially
+# supported plain-requests fallback and curl_cffi is never even loaded.
+# yfinance is pinned for reproducibility — bump deliberately, not by float.
 streamlit>=1.32
-yfinance>=0.2.40
+yfinance==1.5.1
 pandas>=2.0
 numpy>=1.24
 plotly>=5.18

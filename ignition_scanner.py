@@ -35,6 +35,36 @@ import gzip
 import json
 import decimal
 import threading
+import os
+
+# ── CRITICAL: disable curl_cffi BEFORE yfinance is imported ──────────
+# curl_cffi 0.15.0 (yfinance's default HTTP backend) has documented
+# segfault-class bugs (memory corruption in Curl.reset(), upstream
+# issue #677) that crashed this app repeatedly in production — killing
+# the interpreter with no Python traceback. Serializing access (v3.7),
+# removing deprecated APIs (v3.8), and even pinning every yfinance call
+# to a single dedicated thread (v3.9) did not stop the crashes, proving
+# the fault is inside the C extension itself, not our threading.
+#
+# yfinance provides an official escape hatch: this env var makes it use
+# plain `requests` and never import curl_cffi at all. Trade-off: no
+# browser TLS impersonation, so Yahoo may rate-limit more aggressively —
+# but a 429 is a catchable Python exception our data_issues reporting
+# already handles; a segfault kills the whole app. Alpaca remains the
+# primary intraday source and the nightly dump + seed cache backstop
+# fundamentals, so degraded yfinance access is survivable by design.
+# This MUST run before `import yfinance` (checked at module import).
+os.environ["YF_DISABLE_CURL_CFFI"] = "1"
+
+# Belt-and-suspenders: yfinance also has secondary, env-var-unaware
+# `from curl_cffi...` imports (e.g. session type-checking helpers) that
+# are guarded only by `except ImportError`. Poisoning the sys.modules
+# entry makes ANY `import curl_cffi` anywhere in this process raise
+# ImportError, so those guarded imports skip cleanly and the crashing
+# C extension can never be loaded by any code path at all.
+import sys as _sys
+_sys.modules["curl_cffi"] = None
+
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1652,7 +1682,7 @@ if "alerted" not in st.session_state:
 # ----------------------------------------------------------------------------
 # Header
 # ----------------------------------------------------------------------------
-APP_VERSION = "v3.9"
+APP_VERSION = "v3.10"
 last_scan = st.session_state.get("last_scan_time", "--:--:--")
 st.markdown(
     "<div style='display:flex;align-items:center;gap:14px;margin-bottom:2px'>"
